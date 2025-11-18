@@ -554,11 +554,11 @@ class IntegrityVerifier:
                 f"{stats['internal_broken']} broken internal, {stats['attachment_missing']} missing attachments"
                 )
             
-                except Exception as e:
-                self.logger.error(f"Link verification failed: {str(e)}", exc_info=True)
-                stats['error'] = str(e)
+        except Exception as e:
+            self.logger.error(f"Link verification failed: {str(e)}", exc_info=True)
+            stats['error'] = str(e)
         
-                return stats
+        return stats
     
     def _create_backup(self, tree: DocumentationTree, backup_dir: Path) -> Dict[str, Any]:
         """Create complete local backup of fetched content.
