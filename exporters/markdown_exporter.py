@@ -5,7 +5,7 @@ import os
 import re
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Tuple
 
 from models import DocumentationTree, ConfluenceSpace, ConfluencePage
 from logger import ProgressTracker
@@ -311,10 +311,13 @@ class MarkdownExporter:
         try:
             # Process attachments
             if page.attachments:
+                self.logger.debug(f"Processing {len(page.attachments)} attachments for page '{page.title}' (ID: {page.id})")
                 attachment_stats = attachment_manager.process_attachments(page)
                 page_stats['attachments_saved'] = attachment_stats['downloaded']
                 page_stats['attachments_skipped'] = attachment_stats['skipped']
                 page_stats['attachments_failed'] = attachment_stats['failed']
+                
+                self.logger.debug(f"Completed attachments for '{page.title}': {attachment_stats['downloaded']} saved, {attachment_stats['skipped']} skipped, {attachment_stats['failed']} failed")
             
             # Rewrite links
             rewritten_markdown = self.link_rewriter.rewrite_links(
@@ -453,6 +456,7 @@ class MarkdownExporter:
             
             # Process attachments
             if page.attachments:
+                self.logger.debug(f"Processing {len(page.attachments)} attachments for page '{page.title}' (ID: {page.id})")
                 attachment_stats = attachment_manager.process_attachments(page)
                 page_stats['attachments_saved'] = attachment_stats['downloaded']
                 page_stats['attachments_skipped'] = attachment_stats['skipped']
@@ -474,6 +478,19 @@ class MarkdownExporter:
                 page_file.write_text(full_content, encoding='utf-8')
                 page_stats['pages_exported'] += 1
                 self.logger.debug(f"Successfully wrote {len(full_content)} bytes to {page_file}")
+                
+                # Update page metadata only on successful write
+                if 'export_metadata' not in page.conversion_metadata:
+                    page.conversion_metadata['export_metadata'] = {}
+                
+                export_timestamp = datetime.utcnow().isoformat() + 'Z'
+                
+                page.conversion_metadata['export_metadata'].update({
+                    'exported_path': str(page_file.relative_to(space_dir)),
+                    'export_timestamp': export_timestamp,
+                    'attachments_processed': page_stats['attachments_saved'],
+                    'errors': page_stats['errors']
+                })
             except PermissionError as e:
                 self.logger.error(f"Permission denied writing to {page_file}: {e}", exc_info=True)
                 page_stats['errors'].append({
@@ -486,19 +503,6 @@ class MarkdownExporter:
                     'page_id': page.id,
                     'error': f"IO error: {e}"
                 })
-            
-            # Update page metadata
-            if 'export_metadata' not in page.conversion_metadata:
-                page.conversion_metadata['export_metadata'] = {}
-            
-            export_timestamp = datetime.utcnow().isoformat() + 'Z'
-            
-            page.conversion_metadata['export_metadata'].update({
-                'exported_path': str(page_file.relative_to(space_dir)),
-                'export_timestamp': export_timestamp,
-                'attachments_processed': page_stats['attachments_saved'],
-                'errors': page_stats['errors']
-            })
             
         except Exception as e:
             self.logger.error(f"Error exporting page '{page.title}' (ID: {page.id}, Space: {space.key}): {e}", exc_info=True)
@@ -552,7 +556,7 @@ class MarkdownExporter:
         lines.append("---")
         
         return "\n".join(lines)
-    def _get_page_path(self, page: ConfluencePage, space_dir: Path, space: ConfluenceSpace) -> tuple[Path, Path]:
+    def _get_page_path(self, page: ConfluencePage, space_dir: Path, space: ConfluenceSpace) -> Tuple[Path, Path]:
         """
         Calculate page directory and file path based on parent chain.
         
@@ -592,6 +596,11 @@ class MarkdownExporter:
         
         # Add current page's title to get the final file path
         sanitized_title = self._sanitize_filename(page.title)
+        
+        # For pages with children, create subdirectory to match legacy behavior
+        if page.children:
+            page_dir = page_dir / sanitized_title
+        
         page_file = page_dir / f"{sanitized_title}.md"
         
         return page_dir, page_file
