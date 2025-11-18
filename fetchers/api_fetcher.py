@@ -187,13 +187,13 @@ class ApiFetcher(BaseFetcher):
             logger.debug(f"Using cached space '{space_key}'")
         else:
             try:
-                # Fetch all spaces and filter in Python (space_keys param not supported)
-                all_spaces, _ = self.client.get_spaces(return_metadata=True)
-                matching_spaces = [s for s in all_spaces if s.get('key') == space_key]
-                if not matching_spaces:
+                # Use cached fetch_spaces method to avoid fetching all spaces
+                logger.debug(f"Fetching space '{space_key}' (will use cache if available)")
+                spaces = self.fetch_spaces([space_key])
+                if not spaces:
                     raise ValueError(f"Space '{space_key}' not found")
-                space = self._convert_api_space_to_model(matching_spaces[0])
-                self._space_cache[space_key] = space
+                space = spaces[0]  # Already converted to ConfluenceSpace model
+                # No need to cache again - already cached in fetch_spaces()
             except Exception as e:
                 logger.error(f"Failed to fetch space '{space_key}': {str(e)}")
                 raise FetcherError(f"Space '{space_key}' not found: {str(e)}")
