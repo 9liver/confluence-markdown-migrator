@@ -5,7 +5,7 @@ from typing import Any, Dict
 from textual.reactive import reactive
 from textual.widgets import Static
 
-from ..models import DocumentationTree
+from models import DocumentationTree
 from .selection_store import SelectionStore
 
 

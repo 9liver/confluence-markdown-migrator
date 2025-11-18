@@ -5,7 +5,7 @@ from textual.message import Message
 from textual.reactive import reactive
 from textual.widgets import Static
 
-from ..models import DocumentationTree, ConfluencePage
+from models import DocumentationTree, ConfluencePage
 
 
 class SelectionChanged(Message):

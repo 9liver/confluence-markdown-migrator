@@ -11,15 +11,7 @@ import csv
 from typing import Dict, List, Any, Union, Optional
 from datetime import datetime
 
-try:
-    # For package imports
-    from ..models import DocumentationTree, ConfluenceSpace, ConfluencePage
-except ImportError:
-    # For direct script execution
-    import sys
-    import os
-    sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
-    from models import DocumentationTree, ConfluenceSpace, ConfluencePage
+from models import DocumentationTree, ConfluenceSpace, ConfluencePage
 
 logger = logging.getLogger(__name__)
 

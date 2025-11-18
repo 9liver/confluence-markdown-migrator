@@ -18,25 +18,12 @@ try:
 except ImportError:
     HAS_TQDM = False
 
-try:
-    # For package imports
-    from ..models import DocumentationTree, ConfluencePage
-    from ..converters import convert_page
-    from ..exporters import MarkdownExporter
-    from ..importers import WikiJsImporter, BookStackImporter
-    from ..logger import log_section
-    from .migration_report import MigrationReport
-except ImportError:
-    # For direct script execution
-    import sys
-    import os
-    sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
-    from models import DocumentationTree, ConfluencePage
-    from converters import convert_page
-    from exporters import MarkdownExporter
-    from importers import WikiJsImporter, BookStackImporter
-    from logger import log_section
-    from orchestrator.migration_report import MigrationReport
+from models import DocumentationTree, ConfluencePage
+from converters import convert_page
+from exporters import MarkdownExporter
+from importers import WikiJsImporter, BookStackImporter
+from logger import log_section
+from orchestrator.migration_report import MigrationReport
 
 logger = logging.getLogger(__name__)
 
@@ -131,52 +118,52 @@ class MigrationOrchestrator:
                             else:
                                 phase_stats['wikijs_import'] = self._execute_wikijs_import(tree)
                         elif self.export_target == 'bookstack':
-                                if existing_stats and 'bookstack_import' in existing_stats:
+                            if existing_stats and 'bookstack_import' in existing_stats:
                                 self.logger.info("Skipping BookStack import (resumed)")
                                 phase_stats['bookstack_import'] = existing_stats['bookstack_import']
                             else:
-                            phase_stats['bookstack_import'] = self._execute_bookstack_import(tree)
+                                phase_stats['bookstack_import'] = self._execute_bookstack_import(tree)
                         elif self.export_target == 'both_wikis':
                             if existing_stats and 'wikijs_import' in existing_stats and 'bookstack_import' in existing_stats:
-                            self.logger.info("Skipping both wiki imports (resumed)")
-                            phase_stats['wikijs_import'] = existing_stats['wikijs_import']
-                            phase_stats['bookstack_import'] = existing_stats['bookstack_import']
-                        else:
-                            phase_stats['wikijs_import'] = self._execute_wikijs_import(tree)
-                            phase_stats['bookstack_import'] = self._execute_bookstack_import(tree)
-            
-            # Handle import_only workflow
-            elif self.workflow == 'import_only':
-                if self.export_target == 'wikijs':
-                    phase_stats['wikijs_import'] = self._execute_wikijs_import(tree)
-                elif self.export_target == 'bookstack':
-                    phase_stats['bookstack_import'] = self._execute_bookstack_import(tree)
-                elif self.export_target == 'both_wikis':
-                    phase_stats['wikijs_import'] = self._execute_wikijs_import(tree)
-                    phase_stats['bookstack_import'] = self._execute_bookstack_import(tree)
-                else:
-                    self.logger.warning(f"Import-only workflow with target '{self.export_target}' has no effect")
-            
-            # Handle export_only workflow (or default)
-            else:
-                if self.export_target == 'markdown_files':
-                    if existing_stats and 'markdown_export' in existing_stats:
-                        self.logger.info("Skipping markdown export (resumed)")
-                        phase_stats['markdown_export'] = existing_stats['markdown_export']
+                                self.logger.info("Skipping both wiki imports (resumed)")
+                                phase_stats['wikijs_import'] = existing_stats['wikijs_import']
+                                phase_stats['bookstack_import'] = existing_stats['bookstack_import']
+                            else:
+                                phase_stats['wikijs_import'] = self._execute_wikijs_import(tree)
+                                phase_stats['bookstack_import'] = self._execute_bookstack_import(tree)
+                
+                # Handle import_only workflow
+                elif self.workflow == 'import_only':
+                    if self.export_target == 'wikijs':
+                        phase_stats['wikijs_import'] = self._execute_wikijs_import(tree)
+                    elif self.export_target == 'bookstack':
+                        phase_stats['bookstack_import'] = self._execute_bookstack_import(tree)
+                    elif self.export_target == 'both_wikis':
+                        phase_stats['wikijs_import'] = self._execute_wikijs_import(tree)
+                        phase_stats['bookstack_import'] = self._execute_bookstack_import(tree)
                     else:
-                        phase_stats['markdown_export'] = self._execute_markdown_export(tree)
-                elif self.workflow == 'export_only':
-                    self.logger.warning(f"Export-only workflow with wiki target '{self.export_target}' performs no action")
-            
-            # Calculate duration
-            migration_duration = time.time() - start_time
-            
-            # Generate final report
-            self.logger.info("Generating migration report")
-            report = self._generate_report(tree, phase_stats, migration_duration)
-            
-            self.logger.info(f"Migration orchestration complete in {migration_duration:.2f}s")
-            return report
+                        self.logger.warning(f"Import-only workflow with target '{self.export_target}' has no effect")
+                
+                # Handle export_only workflow (or default)
+                else:
+                    if self.export_target == 'markdown_files':
+                        if existing_stats and 'markdown_export' in existing_stats:
+                            self.logger.info("Skipping markdown export (resumed)")
+                            phase_stats['markdown_export'] = existing_stats['markdown_export']
+                        else:
+                            phase_stats['markdown_export'] = self._execute_markdown_export(tree)
+                    elif self.workflow == 'export_only':
+                        self.logger.warning(f"Export-only workflow with wiki target '{self.export_target}' performs no action")
+                
+                # Calculate duration
+                migration_duration = time.time() - start_time
+                
+                # Generate final report
+                self.logger.info("Generating migration report")
+                report = self._generate_report(tree, phase_stats, migration_duration)
+                
+                self.logger.info(f"Migration orchestration complete in {migration_duration:.2f}s")
+                return report
             
             except Exception as e:
                 # Phase failed, execute rollback if needed
@@ -190,12 +177,13 @@ class MigrationOrchestrator:
                 
                 # Re-raise to generate error report
                 raise
+            
             finally:
                 # For export_then_import, preserve export files even if import fails
                 if self.workflow == 'export_then_import' and rollback_occurred:
                     self.logger.info("Preserving exported files as backup (export_then_import workflow)")
                     # Don't rollback markdown export in this case
-            
+        
         except Exception as e:
             self.logger.error(f"Migration orchestration failed: {str(e)}", exc_info=True)
             

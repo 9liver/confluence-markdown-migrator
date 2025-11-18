@@ -9,7 +9,7 @@ import logging
 import re
 from typing import Dict, List, Optional, Any
 
-from ..models import ConfluencePage, ConfluenceSpace, DocumentationTree
+from models import ConfluencePage, ConfluenceSpace, DocumentationTree
 
 
 # Constants

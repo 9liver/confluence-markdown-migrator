@@ -4,7 +4,7 @@ from typing import Any, Dict, List, Optional
 
 from textual.widgets import Tree
 
-from ..models import DocumentationTree, ConfluenceSpace, ConfluencePage
+from models import DocumentationTree, ConfluenceSpace, ConfluencePage
 from .selection_store import SelectionStore, FilterChanged
 
 

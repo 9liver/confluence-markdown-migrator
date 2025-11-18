@@ -6,8 +6,8 @@ import os
 from typing import Any, Dict, List, Optional
 from datetime import datetime
 
-from ..confluence_client import ConfluenceClient
-from ..models import (
+from confluence_client import ConfluenceClient
+from models import (
     ConfluenceAttachment,
     ConfluencePage,
     ConfluenceSpace,

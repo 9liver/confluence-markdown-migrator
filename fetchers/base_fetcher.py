@@ -6,7 +6,7 @@ from typing import Any, Dict, List, Optional
 
 from dateutil.parser import isoparse
 
-from ..models import ConfluenceSpace, DocumentationTree
+from models import ConfluenceSpace, DocumentationTree
 
 
 class FetcherError(Exception):

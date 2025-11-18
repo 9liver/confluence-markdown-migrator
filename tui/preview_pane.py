@@ -5,7 +5,7 @@ from typing import Any, Dict, Optional
 from textual.reactive import reactive
 from textual.widgets import Static
 
-from ...models import DocumentationTree
+from models import DocumentationTree
 from .preview_mappers import BookStackPreviewMapper, WikiJsPreviewMapper
 from .selection_store import SelectionStore
 

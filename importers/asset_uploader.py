@@ -17,7 +17,7 @@ try:
 except ImportError:
     tqdm = None
 
-from ..models import ConfluenceAttachment, ConfluencePage
+from models import ConfluenceAttachment, ConfluencePage
 from .wikijs_client import WikiJsClient, WikiJsApiError
 
 

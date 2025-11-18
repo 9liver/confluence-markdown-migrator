@@ -8,7 +8,7 @@ to BookStack's 3-level structure (Shelf→Book→Chapter→Page).
 import logging
 from typing import List, Dict, Any, Optional
 from bs4 import BeautifulSoup
-from ..models import ConfluencePage, ConfluenceSpace
+from models import ConfluencePage, ConfluenceSpace
 
 logger = logging.getLogger(__name__)
 

@@ -10,7 +10,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from bs4 import BeautifulSoup
 
-from ..models import (
+from models import (
     ConfluenceAttachment,
     ConfluencePage,
     ConfluenceSpace,
@@ -449,7 +449,7 @@ class HtmlFetcher(BaseFetcher):
             r'/pages/viewpage.action\?pageId=(\d+)',  # ?pageId=12345
             r'/display/[^/]+/(\d+)',                     # /display/SPACE/12345
             r'/download/attachments/(\d+)/',             # /download/attachments/12345/
-            r/(\d+)\.html\$',                           # 12345.html
+            r'(\d+)\.html$',                           # 12345.html
             r'pages/(\d+)/'                             # pages/12345/
         ]
         

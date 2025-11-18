@@ -15,7 +15,7 @@ try:
 except ImportError:
     tqdm = None
 
-from ..models import ConfluencePage, ConfluenceSpace, DocumentationTree
+from models import ConfluencePage, ConfluenceSpace, DocumentationTree
 from .wikijs_client import WikiJsClient, WikiJsApiError, WikiJsConnectionError
 from .hierarchy_mapper import ConfluenceHierarchyMapper
 from .asset_uploader import AssetUploader

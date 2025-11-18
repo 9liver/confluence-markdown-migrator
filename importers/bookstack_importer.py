@@ -23,7 +23,7 @@ from .content_transformer import ContentTransformer
 from .image_uploader import ImageUploader
 from .id_mapping_tracker import IdMappingTracker
 from .ordering_manager import OrderingManager
-from ..models import ConfluencePage, ConfluenceSpace, DocumentationTree
+from models import ConfluencePage, ConfluenceSpace, DocumentationTree
 
 logger = logging.getLogger(__name__)
 

@@ -8,7 +8,7 @@ from urllib.parse import urlparse
 
 import yaml
 
-from .models import ExportTarget
+from models import ExportTarget
 
 
 class ConfigLoader:

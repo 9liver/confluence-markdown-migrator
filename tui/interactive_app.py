@@ -8,7 +8,7 @@ from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
 from textual.widgets import Footer, Header, Static
 
-from ..models import DocumentationTree
+from models import DocumentationTree
 from .confluence_tree import ConfluenceTreeView
 from .preview_pane import PreviewPane
 from .search_input import SearchInput

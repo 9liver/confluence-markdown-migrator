@@ -14,6 +14,10 @@ from pathlib import Path
 from typing import Optional, List, Set
 import logging
 
+# Add project root to Python path for relative imports
+current_dir = Path(__file__).parent
+sys.path.insert(0, str(current_dir))
+
 try:
     from tqdm import tqdm
     HAS_TQDM = True
@@ -21,13 +25,20 @@ except ImportError:
     HAS_TQDM = False
 
 # Project imports
-from confluence_markdown_migrator.config_loader import ConfigLoader
-from confluence_markdown_migrator.logger import setup_logging, log_section, log_config
-from confluence_markdown_migrator.models import DocumentationTree, ConfluenceSpace, ConfluencePage
-from confluence_markdown_migrator.fetchers import FetcherFactory
-from confluence_markdown_migrator.confluence_client import ConfluenceClient
-from confluence_markdown_migrator.tui.interactive_app import InteractiveMigrationApp
-from confluence_markdown_migrator.orchestrator import MigrationOrchestrator, MigrationReport
+from config_loader import ConfigLoader
+from logger import setup_logging, log_section, log_config
+from models import DocumentationTree, ConfluenceSpace, ConfluencePage
+from fetchers import FetcherFactory
+from confluence_client import ConfluenceClient
+
+# Optional TUI import - only needed for interactive mode
+try:
+    from tui.interactive_app import InteractiveMigrationApp
+    HAS_TUI = True
+except ImportError:
+    HAS_TUI = False
+
+from orchestrator import MigrationOrchestrator, MigrationReport
 
 # Version
 __version__ = "1.0.0"
@@ -393,6 +404,9 @@ def run_migration(config: dict, args: argparse.Namespace, logger: logging.Logger
         
         # Interactive mode
         if args.interactive:
+            if not HAS_TUI:
+                logger.error("Interactive mode requires the 'textual' library. Please install it with: pip install textual")
+                return 1
             logger.info("Launching interactive TUI for content selection")
             app = InteractiveMigrationApp(tree, config)
             selection_result = app.run()

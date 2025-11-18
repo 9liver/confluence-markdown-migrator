@@ -2,7 +2,7 @@
 
 from typing import Any, Dict, List, Optional, Set
 
-from ...models import DocumentationTree, ConfluencePage, ConfluenceSpace
+from models import DocumentationTree, ConfluencePage, ConfluenceSpace
 
 
 class BookStackPreviewMapper:
