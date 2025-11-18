@@ -358,7 +358,7 @@ class ApiFetcher(BaseFetcher):
         self.cache_stats['api_calls'] += 1
         
         # CRITICAL: Use body.export_view for highest fidelity HTML (not body.storage)
-        expand_fields = 'body.export_view,body.view,ancestors,space,version,metadata.labels,history'
+        expand_fields = ['body.export_view', 'body.view', 'ancestors', 'space', 'version', 'metadata.labels', 'history']
         
         try:
             api_response, validation_metadata = self.client.get_page(
@@ -521,7 +521,7 @@ class ApiFetcher(BaseFetcher):
         self._log_fetch_progress(page_id, depth)
         
         # Fetch page with expansions
-        expand_fields = 'body.export_view,body.view,ancestors,space,version,metadata.labels,history'
+        expand_fields = ['body.export_view', 'body.view', 'ancestors', 'space', 'version', 'metadata.labels', 'history']
         
         try:
             api_response, validation_metadata = self.client.get_page(
@@ -891,7 +891,7 @@ class ApiFetcher(BaseFetcher):
         
         logger.info(f"Searching for pages with CQL: {cql}")
         
-        expand_fields = 'body.export_view,body.view,ancestors,space,version,metadata.labels,history'
+        expand_fields = ['body.export_view', 'body.view', 'ancestors', 'space', 'version', 'metadata.labels', 'history']
         
         try:
             search_results = self.client.search_content(cql, expand=expand_fields)
