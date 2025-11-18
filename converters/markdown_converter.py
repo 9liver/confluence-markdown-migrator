@@ -407,7 +407,7 @@ class MarkdownConverter(MarkdownifyConverter):
         return code_block_pattern.sub(preserve_block, markdown)
     
     # Custom markdownify converters
-    def convert_table(self, el, text, convert_as_inline):
+    def convert_table(self, el, text, convert_as_inline, **kwargs):
         """Custom table converter to ensure proper markdown table syntax."""
         from bs4 import BeautifulSoup
         if convert_as_inline:
@@ -443,7 +443,7 @@ class MarkdownConverter(MarkdownifyConverter):
         result = '\\n'.join(markdown_rows) + '\\n\\n'
         return result
     
-    def convert_blockquote(self, el, text, convert_as_inline):
+    def convert_blockquote(self, el, text, convert_as_inline, **kwargs):
         """Handle blockquotes, check for callout classes."""
         if convert_as_inline:
             return text
@@ -453,18 +453,18 @@ class MarkdownConverter(MarkdownifyConverter):
         for cls in classes:
             if cls.startswith('is-'):
                 callout_type = cls.replace('is-', '')
-                return f'> {{.{cls}}}\\n' + super().convert_blockquote(el, text, convert_as_inline)
+                return f'> {{.{cls}}}\\n' + super().convert_blockquote(el, text, convert_as_inline, **kwargs)
         
-        return super().convert_blockquote(el, text, convert_as_inline)
+        return super().convert_blockquote(el, text, convert_as_inline, **kwargs)
     
-    def convert_code(self, el, text, convert_as_inline):
+    def convert_code(self, el, text, convert_as_inline, **kwargs):
         """Handle inline code and code blocks."""
         language = self._extract_code_language(el)
         if language and not convert_as_inline:
             return f"```{language}\\n{text.strip()}\\n```\\n\\n"
         return f"`{text}`"
     
-    def convert_img(self, el, text, convert_as_inline):
+    def convert_img(self, el, text, convert_as_inline, parent_tags=None, **kwargs):
         """Handle images."""
         src = el.get('src', '')
         alt = el.get('alt', '')
