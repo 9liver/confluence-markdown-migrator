@@ -1,6 +1,7 @@
 """Main markdown exporter orchestrator for Confluence to Markdown migration."""
 
 import logging
+import os
 import re
 from datetime import datetime
 from pathlib import Path
@@ -128,7 +129,28 @@ class MarkdownExporter:
             logger=self.logger
         )
         
-        # Process root pages
+        # Pre-export validation
+        all_space_pages = space.get_all_pages()
+        if not all_space_pages:
+            self.logger.warning(f"Space '{space.key}' has no pages to export")
+            return {
+                'pages_exported': 0,
+                'attachments_saved': 0,
+                'attachments_skipped': 0,
+                'attachments_failed': 0,
+                'errors': []
+            }
+        
+        pages_with_content = sum(1 for p in all_space_pages if p.markdown_content)
+        self.logger.info(
+            f"Space '{space.key}' has {pages_with_content}/{len(all_space_pages)} pages with markdown content"
+        )
+        self.logger.debug(f"Collected {len(all_space_pages)} total pages from space '{space.key}'")
+        
+        # Track exported pages to avoid duplicates
+        exported_page_ids = set()
+        
+        # Initialize space stats
         space_stats = {
             'pages_exported': 0,
             'attachments_saved': 0,
@@ -137,15 +159,29 @@ class MarkdownExporter:
             'errors': []
         }
         
-        for page in space.pages:
+        # Process all pages (flat iteration instead of recursive root-only)
+        for idx, page in enumerate(all_space_pages):
+            # Skip if already exported
+            if page.id in exported_page_ids:
+                self.logger.debug(f"Skipping duplicate page ID {page.id}")
+                continue
+            
+            # Skip if no markdown content
+            if not page.markdown_content:
+                self.logger.info(
+                    f"Skipping page '{page.title}' (ID: {page.id}) - no markdown content (page {idx+1}/{len(all_space_pages)})"
+                )
+                if 'export_errors' not in page.conversion_metadata:
+                    page.conversion_metadata['export_errors'] = []
+                page.conversion_metadata['export_errors'].append("No markdown content available")
+                continue
+            
             try:
-                page_stats = self._export_page_recursive(
+                page_stats = self._export_page_flat(
                     page=page,
-                    parent_dir=space_dir,
                     space_dir=space_dir,
                     attachment_manager=attachment_manager,
-                    depth=0,
-                    fs_depth=0
+                    space=space
                 )
                 
                 # Update space stats
@@ -155,6 +191,10 @@ class MarkdownExporter:
                 space_stats['attachments_failed'] += page_stats['attachments_failed']
                 space_stats['errors'].extend(page_stats['errors'])
                 
+                # Track exported page
+                if page_stats['pages_exported'] > 0:
+                    exported_page_ids.add(page.id)
+                
             except Exception as e:
                 self.logger.error(f"Error exporting page '{page.title}': {e}", exc_info=True)
                 space_stats['errors'].append({
@@ -162,6 +202,15 @@ class MarkdownExporter:
                     'page_title': page.title,
                     'error': str(e)
                 })
+        
+        # Validate stats
+        assert space_stats['pages_exported'] <= len(all_space_pages)
+        
+        # Warn if no pages exported
+        if space_stats['pages_exported'] == 0:
+            self.logger.warning(
+                f"No pages exported from space '{space.key}' despite {len(all_space_pages)} pages available"
+            )
         
         # Generate index file
         if self.create_index_files:
@@ -181,14 +230,24 @@ class MarkdownExporter:
         att_stats = attachment_manager.get_stats()
         self.stats['total_attachments_size_bytes'] += att_stats['total_size_bytes']
         
+        # Calculate export rate
+        export_rate = (space_stats['pages_exported'] / len(all_space_pages) * 100) if all_space_pages else 0
+        if export_rate < 100:
+            self.logger.warning(
+                f"Only {export_rate:.1f}% of pages exported - check logs for skipped pages"
+            )
+        
         self.logger.info(
             f"Space '{space.key}' export complete: "
-            f"{space_stats['pages_exported']} pages, "
+            f"{space_stats['pages_exported']}/{len(all_space_pages)} pages exported, "
             f"{space_stats['attachments_saved']} attachments saved"
         )
         
         return space_stats
     
+    # DEPRECATED: Use _export_page_flat() instead. Kept for backward compatibility.
+    # The preferred approach is flat iteration via _export_page_flat() for better performance
+    # and simpler logic. This method remains for compatibility with external callers.
     def _export_page_recursive(
         self,
         page: ConfluencePage,
@@ -324,16 +383,137 @@ class MarkdownExporter:
         
         return page_stats
     
-    def _generate_frontmatter(self, page: ConfluencePage) -> str:
+    def _export_page_flat(
+        self,
+        page: ConfluencePage,
+        space_dir: Path,
+        attachment_manager: AttachmentManager,
+        space: ConfluenceSpace
+    ) -> Dict[str, Any]:
         """
-        Generate YAML frontmatter for markdown file.
+        Export a single page without recursion (flat iteration approach).
+        
+        Calculates page directory based on parent chain for proper hierarchy.
         
         Args:
             page: ConfluencePage instance
+            space_dir: Root directory for the space
+            attachment_manager: AttachmentManager instance for this space
             
         Returns:
-            Formatted frontmatter string
+            Page-level statistics
         """
+        page_stats = {
+            'pages_exported': 0,
+            'attachments_saved': 0,
+            'attachments_skipped': 0,
+            'attachments_failed': 0,
+            'errors': []
+        }
+        
+        # Calculate page directory based on parent chain
+        page_dir, page_file = self._get_page_path(page, space_dir, space)
+        
+        # Compute actual filesystem depth for correct relative links
+        if page_dir == space_dir:
+            page_depth = 0
+        else:
+            try:
+                relative_dir = page_dir.relative_to(space_dir)
+                page_depth = len(relative_dir.parts)
+            except ValueError:
+                # page_dir not under space_dir (shouldn't happen with current logic)
+                self.logger.warning(
+                    f"Page directory {page_dir} is not under space directory {space_dir}, "
+                    f"using depth=0 for page '{page.title}' (ID: {page.id})"
+                )
+                page_depth = 0
+        
+        self.logger.debug(f"Computed page_depth={page_depth} for '{page.title}' (dir: {page_dir})")
+        self.logger.debug(f"Exporting page '{page.title}' (ID: {page.id}) to {page_file}")
+        
+        try:
+            # Create parent directories with better error handling
+            try:
+                page_dir.mkdir(parents=True, exist_ok=True)
+            except PermissionError as e:
+                parent_exists = page_dir.parent.exists()
+                parent_is_dir = page_dir.parent.is_dir() if parent_exists else False
+                parent_writable = os.access(str(page_dir.parent), os.W_OK) if parent_exists else False
+                self.logger.error(
+                    f"Permission denied creating directory {page_dir}: {e}. "
+                    f"Parent exists: {parent_exists}, "
+                    f"is dir: {parent_is_dir}, "
+                    f"writable: {parent_writable}"
+                )
+                raise
+            except OSError as e:
+                self.logger.error(f"OS error creating directory {page_dir}: {e}")
+                raise
+            
+            # Process attachments
+            if page.attachments:
+                attachment_stats = attachment_manager.process_attachments(page)
+                page_stats['attachments_saved'] = attachment_stats['downloaded']
+                page_stats['attachments_skipped'] = attachment_stats['skipped']
+                page_stats['attachments_failed'] = attachment_stats['failed']
+            
+            # Rewrite links
+            rewritten_markdown = self.link_rewriter.rewrite_links(
+                page=page,
+                attachment_manager=attachment_manager,
+                page_depth=page_depth  # Use computed depth for correct relative paths
+            )
+            
+            # Generate frontmatter
+            frontmatter = self._generate_frontmatter(page)
+            
+            # Write markdown file with comprehensive error handling
+            full_content = f"{frontmatter}\n\n{rewritten_markdown}"
+            try:
+                page_file.write_text(full_content, encoding='utf-8')
+                page_stats['pages_exported'] += 1
+                self.logger.debug(f"Successfully wrote {len(full_content)} bytes to {page_file}")
+            except PermissionError as e:
+                self.logger.error(f"Permission denied writing to {page_file}: {e}", exc_info=True)
+                page_stats['errors'].append({
+                    'page_id': page.id,
+                    'error': f"Permission denied: {e}"
+                })
+            except (OSError, IOError) as e:
+                self.logger.error(f"IO error writing to {page_file}: {e}", exc_info=True)
+                page_stats['errors'].append({
+                    'page_id': page.id,
+                    'error': f"IO error: {e}"
+                })
+            
+            # Update page metadata
+            if 'export_metadata' not in page.conversion_metadata:
+                page.conversion_metadata['export_metadata'] = {}
+            
+            export_timestamp = datetime.utcnow().isoformat() + 'Z'
+            
+            page.conversion_metadata['export_metadata'].update({
+                'exported_path': str(page_file.relative_to(space_dir)),
+                'export_timestamp': export_timestamp,
+                'attachments_processed': page_stats['attachments_saved'],
+                'errors': page_stats['errors']
+            })
+            
+        except Exception as e:
+            self.logger.error(f"Error exporting page '{page.title}' (ID: {page.id}, Space: {space.key}): {e}", exc_info=True)
+            page_stats['errors'].append({
+                'page_id': page.id,
+                'error': str(e)
+            })
+            if 'export_errors' not in page.conversion_metadata:
+                page.conversion_metadata['export_errors'] = []
+            page.conversion_metadata['export_errors'].append(str(e))
+        
+        return page_stats
+    
+    def _generate_frontmatter(self, page: ConfluencePage) -> str:
+        """Generate YAML frontmatter for markdown file with Confluence metadata."""
         lines = ["---"]
         
         # Core metadata
@@ -342,27 +522,27 @@ class MarkdownExporter:
         lines.append(f"space_key: {page.space_key}")
         
         # Last modified
-        last_modified = page.metadata.get('last_modified')
+        last_modified = page.metadata.get("last_modified")
         if last_modified:
             lines.append(f"last_modified: {last_modified}")
         
         # Author
-        author = page.metadata.get('author')
+        author = page.metadata.get("author")
         if author:
             lines.append(f"author: {author}")
         
         # Labels
-        labels = page.metadata.get('labels', [])
+        labels = page.metadata.get("labels", [])
         if labels:
-            labels_str = ', '.join(labels)
+            labels_str = ", ".join(labels)
             lines.append(f"labels: [{labels_str}]")
         
         # Version
-        version = page.metadata.get('version', 1)
+        version = page.metadata.get("version", 1)
         lines.append(f"version: {version}")
         
         # Conversion status
-        conversion_status = page.conversion_metadata.get('conversion_status', 'pending')
+        conversion_status = page.conversion_metadata.get("conversion_status", "pending")
         lines.append(f"conversion_status: {conversion_status}")
         
         # Attachments count
@@ -371,7 +551,50 @@ class MarkdownExporter:
         
         lines.append("---")
         
-        return '\n'.join(lines)
+        return "\n".join(lines)
+    def _get_page_path(self, page: ConfluencePage, space_dir: Path, space: ConfluenceSpace) -> tuple[Path, Path]:
+        """
+        Calculate page directory and file path based on parent chain.
+        
+        Args:
+            page: ConfluencePage instance
+            space_dir: Root directory for the space
+            space: ConfluenceSpace instance
+            
+        Returns:
+            Tuple of (page_directory, page_file_path)
+        """
+        # Start with space directory
+        page_dir = space_dir
+        
+        # Build path by traversing parent chain
+        parent_titles = []
+        current_page = page
+        
+        # Traverse up the parent chain until we reach a root page
+        while current_page.parent_id:
+            parent = space.get_page_by_id(current_page.parent_id)
+            if parent:
+                # Add parent's sanitized title to the path (in reverse order)
+                parent_titles.insert(0, self._sanitize_filename(parent.title))
+                current_page = parent
+            else:
+                # Orphan page - parent not found, stop traversal
+                self.logger.warning(
+                    f"Page '{page.title}' (ID: {page.id}) has parent_id {page.parent_id} "
+                    f"but parent page not found in space '{space.key}'"
+                )
+                break
+        
+        # Apply parent titles to directory path
+        for parent_title in parent_titles:
+            page_dir = page_dir / parent_title
+        
+        # Add current page's title to get the final file path
+        sanitized_title = self._sanitize_filename(page.title)
+        page_file = page_dir / f"{sanitized_title}.md"
+        
+        return page_dir, page_file
     
     def _sanitize_filename(self, title: str) -> str:
         """

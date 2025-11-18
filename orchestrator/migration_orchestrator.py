@@ -24,6 +24,7 @@ from exporters import MarkdownExporter
 from importers import WikiJsImporter, BookStackImporter
 from logger import log_section, ProgressTracker
 from orchestrator.migration_report import MigrationReport
+from integrity_verifier import IntegrityVerifier
 
 logger = logging.getLogger(__name__)
 
@@ -58,8 +59,12 @@ class MigrationOrchestrator:
         self.wikijs_importer = None
         self.bookstack_importer = None
         self.report_generator = None
+        self.integrity_verifier = None
         
-        self.logger.info(f"MigrationOrchestrator initialized with workflow: {self.workflow}, target: {self.export_target}")
+        # Extract integrity verification settings
+        self.verify_integrity = config.get('advanced', {}).get('integrity_verification', {}).get('enabled', False)
+        
+        self.logger.info(f"MigrationOrchestrator initialized with workflow: {self.workflow}, target: {self.export_target}, verify_integrity: {self.verify_integrity}")
     
     def orchestrate_migration(self, tree: DocumentationTree, existing_phase_stats: Optional[Dict[str, Any]] = None, checkpoint_path: Optional[str] = None) -> Dict[str, Any]:
         """
@@ -80,6 +85,24 @@ class MigrationOrchestrator:
         existing_stats = existing_phase_stats or {}
         
         try:
+            # Phase 1.5: Integrity Verification (if enabled and not resumed)
+            if self.verify_integrity and (not existing_stats or 'integrity_verification' not in existing_stats):
+                self.logger.info("Executing Phase 1.5: Integrity Verification")
+                verification_report = self._execute_integrity_verification(tree)
+                phase_stats['integrity_verification'] = verification_report
+                
+                # Save checkpoint after verification
+                if checkpoint_path:
+                    self._save_state(tree, phase_stats, checkpoint_path)
+            elif existing_stats and 'integrity_verification' in existing_stats:
+                self.logger.info("Skipping integrity verification (resumed)")
+                phase_stats['integrity_verification'] = existing_stats['integrity_verification']
+                # Restore integrity report to tree
+                tree.integrity_report = existing_stats['integrity_verification']
+            else:
+                self.logger.info("Integrity verification disabled")
+                phase_stats['integrity_verification'] = {'enabled': False}
+            
             # Phase 1: Content Conversion
             if existing_stats and 'content_conversion' in existing_stats:
                 self.logger.info("Skipping content conversion (resumed)")
@@ -380,6 +403,61 @@ class MigrationOrchestrator:
                 'updated': 0
             }
     
+    def _execute_integrity_verification(self, tree: DocumentationTree) -> Dict[str, Any]:
+        """
+        Execute Phase 1.5: Integrity Verification.
+        
+        Args:
+            tree: DocumentationTree with fetched content
+            
+        Returns:
+            Verification statistics dictionary
+        """
+        log_section("Phase 1.5: Integrity Verification")
+        
+        try:
+            # Create verifier
+            self.logger.info("Creating IntegrityVerifier")
+            self.integrity_verifier = IntegrityVerifier(self.config, tree, self.logger)
+            
+            # Run verification
+            self.logger.info("Verifying content integrity")
+            verification_report = self.integrity_verifier.verify_tree(tree)
+            
+            # Store report in tree
+            tree.integrity_report = verification_report
+            tree.metadata['integrity_verified'] = True
+            tree.metadata['integrity_timestamp'] = time.time()
+            tree.metadata['integrity_score'] = verification_report.get('summary', {}).get('integrity_score', 0.0)
+            
+            # Log summary
+            summary = verification_report.get('summary', {})
+            integrity_score = summary.get('integrity_score', 0.0)
+            total_issues = summary.get('total_issues', 0)
+            
+            self.logger.info(
+                f"Phase 1.5 complete: Integrity score {integrity_score:.1%}, "
+                f"{total_issues} issues found"
+            )
+            
+            # Check if we should halt on critical failures
+            halt_on_failure = self.config.get('advanced', {}).get('integrity_verification', {}).get('halt_on_failure', False)
+            if halt_on_failure and integrity_score < 0.5:  # Less than 50% integrity
+                raise Exception(f"Integrity verification failed: score {integrity_score:.1%} below threshold")
+            
+            return verification_report
+            
+        except Exception as e:
+            self.logger.error(f"Integrity verification failed: {str(e)}", exc_info=True)
+            return {
+                'failed': True,
+                'error': str(e),
+                'summary': {
+                    'integrity_score': 0.0,
+                    'total_issues': -1
+                }
+            }
+
     def _execute_bookstack_import(self, tree: DocumentationTree) -> Dict[str, Any]:
         """
         Execute Phase 2c: Import to BookStack.
@@ -480,8 +558,13 @@ class MigrationOrchestrator:
             # Create report generator
             report_generator = MigrationReport(self.logger)
             
-            # Generate report
-            report = report_generator.generate_report(tree, phase_stats, migration_duration, self.export_target)
+            # Get integrity report if available
+            integrity_report = tree.integrity_report if hasattr(tree, 'integrity_report') else None
+            
+            # Generate report with integrity data
+            report = report_generator.generate_report(
+                tree, phase_stats, migration_duration, self.export_target, integrity_report=integrity_report
+            )
             
             self.logger.info("Migration report generated successfully")
             

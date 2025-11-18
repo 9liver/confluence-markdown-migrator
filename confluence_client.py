@@ -114,6 +114,8 @@ class ConfluenceClient:
         endpoint: str,
         full_url: Optional[str] = None,
         expected_status: Optional[int] = 200,
+        if_none_match: Optional[str] = None,
+        if_modified_since: Optional[str] = None,
         **kwargs
     ) -> requests.Response:
         """
@@ -124,6 +126,8 @@ class ConfluenceClient:
             endpoint: API endpoint path (e.g., "/rest/api/space")
             full_url: Optional full URL (overrides base_url + endpoint)
             expected_status: Expected success status code
+            if_none_match: ETag for If-None-Match header (conditional GET)
+            if_modified_since: Last-Modified date for If-Modified-Since header
             **kwargs: Additional arguments for requests
             
         Returns:
@@ -138,6 +142,15 @@ class ConfluenceClient:
         
         url = full_url if full_url else urljoin(self.base_url, endpoint.lstrip('/'))
         
+        # Add conditional headers if provided
+        if if_none_match or if_modified_since:
+            headers = kwargs.setdefault('headers', {})
+            if if_none_match:
+                headers['If-None-Match'] = if_none_match
+            if if_modified_since:
+                headers['If-Modified-Since'] = if_modified_since
+            logger.debug(f"Using conditional headers: If-None-Match={if_none_match}, If-Modified-Since={if_modified_since}")
+        
         start_time = time.time()
         logger.debug(f"API Request: {method} {url}")
         
@@ -147,6 +160,22 @@ class ConfluenceClient:
             
             # Log response details
             logger.debug(f"API Response: {response.status_code} {url} ({elapsed:.3f}s)")
+            
+            # Extract cache headers
+            etag = response.headers.get('ETag')
+            last_modified = response.headers.get('Last-Modified')
+            if etag or last_modified:
+                logger.debug(f"Cache headers: ETag={etag}, Last-Modified={last_modified}")
+            
+            # Store cache headers in response object
+            response.cache_etag = etag
+            response.cache_last_modified = last_modified
+            
+            # Handle 304 Not Modified
+            if response.status_code == 304:
+                logger.debug(f"Cache valid (304 Not Modified): {url}")
+                response.cache_valid = True
+                return response
             
             # Handle rate limiting (429) with retry loop
             retry_count = 0
@@ -165,6 +194,7 @@ class ConfluenceClient:
                 response.close()
                 
                 # Retry after delay
+                retry_count += 1
                 time.sleep(wait_time)
                 
                 # Make the request again
@@ -175,6 +205,9 @@ class ConfluenceClient:
             # If still 429 after all retries, let it proceed to raise_for_status()
             if response.status_code == 429 and retry_count >= max_retries:
                 logger.error(f"Rate limit exceeded after {max_retries} attempts: {url}")
+            
+            # Normalize cache_valid attribute
+            response.cache_valid = False
             
             # Raise for other HTTP errors
             if expected_status and response.status_code != expected_status:
@@ -221,21 +254,64 @@ class ConfluenceClient:
             # Ensure request time is updated even on errors
             self.last_request_time = time.time()
     
-    def get_spaces(self, limit: int = 500) -> List[Dict[str, Any]]:
+    def validate_cache(self, url: str, etag: Optional[str] = None, last_modified: Optional[str] = None) -> bool:
+        """
+        Validate cache by making a conditional HEAD request.
+        
+        Args:
+            url: URL to validate
+            etag: ETag from cached response
+            last_modified: Last-Modified date from cached response
+            
+        Returns:
+            True if cache is still valid (304 Not Modified), False if stale
+        """
+        if not etag and not last_modified:
+            return False
+        
+        try:
+            # Make HEAD request with conditional headers
+            response = self._make_request(
+                'HEAD',
+                '',
+                full_url=url,
+                expected_status=None,  # Allow both 200 and 304
+                if_none_match=etag,
+                if_modified_since=last_modified
+            )
+            
+            # Check if cache is valid
+            if response.status_code == 304:
+                logger.debug(f"Cache validation passed: {url}")
+                return True
+            else:
+                logger.debug(f"Cache validation failed (status {response.status_code}): {url}")
+                return False
+                
+        except requests.exceptions.RequestException as e:
+            logger.warning(f"Cache validation request failed: {url} - {str(e)}")
+            # Be conservative: if validation fails, assume cache is invalid
+            return False
+    
+    def get_spaces(self, limit: int = 500, return_metadata: bool = False) -> Union[List[Dict[str, Any]], Tuple[List[Dict[str, Any]], Dict[str, Any]]]:
         """
         Fetch all Confluence spaces with pagination.
         
         Args:
             limit: Number of spaces per page
+            return_metadata: If True, return tuple of (data, validation_metadata)
             
         Returns:
-            List of space dictionaries
+            List of space dictionaries, or tuple of (list, validation_metadata) if return_metadata=True
             
         Raises:
             requests.exceptions.RequestException: For API errors
         """
         spaces = []
         start = 0
+        
+        # Make a single request to get validation headers - assume consistency across pagination
+        response = None
         
         while True:
             params = {
@@ -256,9 +332,19 @@ class ConfluenceClient:
             logger.debug(f"Fetched {len(spaces)} spaces so far...")
         
         logger.info(f"Fetched {len(spaces)} total spaces")
-        return spaces
+        
+        # Prepare validation metadata if requested
+        if return_metadata:
+            validation_metadata = {
+                'etag': response.cache_etag if response else None,
+                'last_modified': response.cache_last_modified if response else None,
+                'timestamp': time.time()
+            }
+            return spaces, validation_metadata
+        else:
+            return spaces
     
-    def get_space_content(self, space_key: str, limit: int = 100) -> List[Dict[str, Any]]:
+    def get_space_content(self, space_key: str, limit: int = 100, return_metadata: bool = False) -> Union[List[Dict[str, Any]], Tuple[List[Dict[str, Any]], Dict[str, Any]]]:
         """
         Get top-level pages in a space with full content.
         
@@ -268,9 +354,10 @@ class ConfluenceClient:
         Args:
             space_key: Confluence space key
             limit: Number of pages per page
+            return_metadata: If True, return tuple of (data, validation_metadata)
             
         Returns:
-            List of page dictionaries with full content
+            List of page dictionaries with full content, or tuple with validation metadata
         """
         logger.info(f"Fetching pages with full content for space '{space_key}'")
         
@@ -278,6 +365,7 @@ class ConfluenceClient:
         page_list = []
         start = 0
         last_log_time = time.time()
+        validation_headers = None
         
         while True:
             params = {
@@ -288,6 +376,13 @@ class ConfluenceClient:
             
             response = self._make_request('GET', '/rest/api/content', params=params)
             data = response.json()
+            
+            # Capture validation headers from first response
+            if validation_headers is None:
+                validation_headers = {
+                    'etag': response.cache_etag,
+                    'last_modified': response.cache_last_modified
+                }
             
             page_list.extend(data['results'])
             
@@ -322,22 +417,33 @@ class ConfluenceClient:
                 logger.warning(f"Failed to fetch page {page_id}: {str(e)} - skipping")
         
         logger.info(f"Successfully fetched {len(pages_with_content)} pages with full content")
-        return pages_with_content
+        
+        # Prepare validation metadata if requested
+        if return_metadata:
+            validation_metadata = {
+                **validation_headers,
+                'timestamp': time.time()
+            }
+            return pages_with_content, validation_metadata
+        else:
+            return pages_with_content
     
     def get_page(
         self,
         page_id: str,
-        expand: Optional[List[str]] = None
-    ) -> Dict[str, Any]:
+        expand: Optional[List[str]] = None,
+        return_metadata: bool = False
+    ) -> Union[Dict[str, Any], Tuple[Dict[str, Any], Dict[str, Any]]]:
         """
         Fetch single page with specified expansions.
         
         Args:
             page_id: Confluence page ID
             expand: List of expansions (e.g., ['body.export_view', 'ancestors', 'version'])
+            return_metadata: If True, return tuple of (data, validation_metadata)
             
         Returns:
-            Page dictionary with expanded fields
+            Page dictionary with expanded fields, or tuple with validation metadata
             
         Raises:
             requests.exceptions.HTTPError: For 404 or other HTTP errors
@@ -352,21 +458,33 @@ class ConfluenceClient:
             params=params
         )
         
-        return response.json()
+        page_data = response.json()
+        
+        if return_metadata:
+            validation_metadata = {
+                'etag': response.cache_etag,
+                'last_modified': response.cache_last_modified,
+                'timestamp': time.time()
+            }
+            return page_data, validation_metadata
+        else:
+            return page_data
     
-    def get_page_children(self, page_id: str, limit: int = 100) -> List[Dict[str, Any]]:
+    def get_page_children(self, page_id: str, limit: int = 100, return_metadata: bool = False) -> Union[List[Dict[str, Any]], Tuple[List[Dict[str, Any]], Dict[str, Any]]]:
         """
         Get child pages of a specific page.
         
         Args:
             page_id: Parent page ID
             limit: Number of children per page
+            return_metadata: If True, return tuple of (data, validation_metadata)
             
         Returns:
-            List of child page dictionaries
+            List of child page dictionaries, or tuple with validation metadata
         """
         children = []
         start = 0
+        response = None
         
         while True:
             params = {
@@ -389,21 +507,32 @@ class ConfluenceClient:
             start += limit
         
         logger.debug(f"Fetched {len(children)} children for page {page_id}")
-        return children
+        
+        if return_metadata:
+            validation_metadata = {
+                'etag': response.cache_etag if response else None,
+                'last_modified': response.cache_last_modified if response else None,
+                'timestamp': time.time()
+            }
+            return children, validation_metadata
+        else:
+            return children
     
-    def get_attachments(self, page_id: str, limit: int = 100) -> List[Dict[str, Any]]:
+    def get_attachments(self, page_id: str, limit: int = 100, return_metadata: bool = False) -> Union[List[Dict[str, Any]], Tuple[List[Dict[str, Any]], Dict[str, Any]]]:
         """
         Get attachments of a specific page.
         
         Args:
             page_id: Page ID
             limit: Number of attachments per page
+            return_metadata: If True, return tuple of (data, validation_metadata)
             
         Returns:
-            List of attachment dictionaries
+            List of attachment dictionaries, or tuple with validation metadata
         """
         attachments = []
         start = 0
+        response = None
         
         while True:
             params = {
@@ -426,38 +555,50 @@ class ConfluenceClient:
             start += limit
         
         logger.debug(f"Fetched {len(attachments)} attachments for page {page_id}")
-        return attachments
+        
+        if return_metadata:
+            validation_metadata = {
+                'etag': response.cache_etag if response else None,
+                'last_modified': response.cache_last_modified if response else None,
+                'timestamp': time.time()
+            }
+            return attachments, validation_metadata
+        else:
+            return attachments
     
-    def download_attachment(self, download_url: str) -> bytes:
+    def download_attachment(self, download_url: str, return_metadata: bool = False) -> Union[bytes, Tuple[bytes, Dict[str, Any]]]:
         """
         Download attachment from Confluence.
         
         Args:
             download_url: Full URL to download attachment
+            return_metadata: If True, return tuple of (data, validation_metadata)
             
         Returns:
-            Attachment binary data
+            Attachment binary data, or tuple with validation metadata
             
         Raises:
             requests.exceptions.HTTPError: For API errors
             requests.exceptions.Timeout: For timeout errors
         """
-        return self._download_with_retry(download_url)
+        return self._download_with_retry(download_url, return_metadata=return_metadata)
     
     def _download_with_retry(
         self,
         url: str,
-        expected_status: int = 200
-    ) -> bytes:
+        expected_status: int = 200,
+        return_metadata: bool = False
+    ) -> Union[bytes, Tuple[bytes, Dict[str, Any]]]:
         """
         Download file with exponential backoff retry logic.
         
         Args:
             url: URL to download from
             expected_status: Expected HTTP status code
+            return_metadata: If True, return tuple of (data, validation_metadata)
             
         Returns:
-            Downloaded bytes
+            Downloaded bytes, or tuple with validation metadata
             
         Raises:
             requests.exceptions.HTTPError: For HTTP errors after retries
@@ -468,8 +609,31 @@ class ConfluenceClient:
         for attempt in range(max_attempts):
             try:
                 response = self._make_request('GET', '', full_url=url, expected_status=expected_status)
-                return response.content
                 
+                # Check if we got 304 Not Modified (valid cache)
+                if hasattr(response, 'cache_valid') and response.cache_valid:
+                    validation_metadata = {
+                        'etag': response.cache_etag,
+                        'last_modified': response.cache_last_modified,
+                        'timestamp': time.time()
+                    }
+                    if return_metadata:
+                        return b'', validation_metadata  # No content for 304
+                    else:
+                        return b''
+                
+                binary_data = response.content
+                
+                if return_metadata:
+                    validation_metadata = {
+                        'etag': response.cache_etag,
+                        'last_modified': response.cache_last_modified,
+                        'timestamp': time.time()
+                    }
+                    return binary_data, validation_metadata
+                else:
+                    return binary_data
+                    
             except requests.exceptions.RequestException as e:
                 # Check if this is a transient error worth retrying
                 is_transient = self._is_transient_error(e)
@@ -526,7 +690,7 @@ class ConfluenceClient:
         logger.warning(f"Treating error as permanent (no retry): {type(exception).__name__}")
         return False
     
-    def search_content(self, cql: str, limit: int = 100, expand: Optional[List[str]] = None) -> List[Dict[str, Any]]:
+    def search_content(self, cql: str, limit: int = 100, expand: Optional[List[str]] = None, return_metadata: bool = False) -> Union[List[Dict[str, Any]], Tuple[List[Dict[str, Any]], Dict[str, Any]]]:
         """
         Search content using Confluence Query Language (CQL).
         
@@ -534,12 +698,14 @@ class ConfluenceClient:
             cql: CQL search query
             limit: Number of results per page
             expand: Optional expansions for result items
+            return_metadata: If True, return tuple of (data, validation_metadata)
             
         Returns:
-            List of content dictionaries matching search
+            List of content dictionaries matching search, or tuple with validation metadata
         """
         results = []
         start = 0
+        response = None
         
         while True:
             params = {
@@ -566,7 +732,16 @@ class ConfluenceClient:
             start += limit
         
         logger.info(f"CQL search returned {len(results)} results for query: {cql}")
-        return results
+        
+        if return_metadata:
+            validation_metadata = {
+                'etag': response.cache_etag if response else None,
+                'last_modified': response.cache_last_modified if response else None,
+                'timestamp': time.time()
+            }
+            return results, validation_metadata
+        else:
+            return results
     @classmethod
     def from_config(cls, config: Dict[str, Any]) -> 'ConfluenceClient':
         """

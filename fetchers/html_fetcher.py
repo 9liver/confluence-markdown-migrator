@@ -4,6 +4,7 @@ import fnmatch
 import logging
 import os
 import re
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -17,6 +18,7 @@ from models import (
     DocumentationTree
 )
 from .base_fetcher import BaseFetcher, FetcherError
+from .cache_manager import CacheManager, CacheMode
 
 logger = logging.getLogger('confluence_markdown_migrator.fetcher.html')
 
@@ -51,7 +53,33 @@ class HtmlFetcher(BaseFetcher):
         if not self.index_path.exists():
             raise FileNotFoundError(f"index.html not found in export path: {self.index_path}")
         
+        # Initialize basic cache manager for file-based caching (TTL only)
+        self.cache_manager = CacheManager(config)
+        self._cache_stats = {
+            'hits': 0,
+            'misses': 0
+        }
+        
         logger.info(f"Initialized HtmlFetcher for path: {self.html_export_path}")
+    
+    def get_cache_stats(self) -> Dict[str, Any]:
+        """Get cache statistics for HTML mode."""
+        # Calculate total requests
+        total_requests = self._cache_stats['hits'] + self._cache_stats['misses']
+        hit_rate = self._cache_stats['hits'] / total_requests if total_requests > 0 else 0.0
+        
+        return {
+            **self._cache_stats,
+            'enabled': self.cache_manager.enabled,
+            'mode': 'TTL_only',  # HTML mode doesn't support validation
+            'validations': 0,  # Not applicable for HTML mode
+            'invalidations': 0,  # Not applicable for HTML mode
+            'hit_rate': hit_rate,
+            'api_calls_saved': self._cache_stats['hits'],  # Parse time savings
+            'total_entries': 0,  # Not tracked for HTML mode
+            'total_size_mb': 0,  # Not tracked for HTML mode
+            'api_calls_made': 0  # Not applicable for HTML mode
+        }
     
     def fetch_spaces(self, space_keys: Optional[List[str]] = None) -> List[ConfluenceSpace]:
         """
@@ -65,11 +93,20 @@ class HtmlFetcher(BaseFetcher):
         """
         logger.info(f"Parsing spaces from {self.index_path}")
         
-        with open(self.index_path, 'r', encoding='utf-8') as f:
-            soup = BeautifulSoup(f, 'lxml')
+        # Try to cache space metadata parse
+        cache_key = CacheManager.generate_cache_key('html_space_metadata', export_path=str(self.html_export_path))
+        cached_metadata = self.cache_manager.get(cache_key)
         
-        # Parse space metadata from index
-        space_metadata = self._parse_index_html()
+        if cached_metadata and self.cache_manager.enabled:
+            logger.debug("Using cached space metadata")
+            space_metadata = cached_metadata
+            self._cache_stats['hits'] += 1
+        else:
+            logger.debug("Parsing space metadata from HTML")
+            space_metadata = self._parse_index_html()
+            if self.cache_manager.enabled:
+                self.cache_manager.set(cache_key, space_metadata)
+            self._cache_stats['misses'] += 1
         
         spaces = []
         if space_metadata:
@@ -113,9 +150,29 @@ class HtmlFetcher(BaseFetcher):
         """
         logger.info(f"Fetching space content for '{space_key}' from HTML export")
         
-        # Parse space metadata and page tree from index
+        # Try to cache page tree structure parse
+        tree_cache_key = CacheManager.generate_cache_key('html_page_tree', export_path=str(self.html_export_path))
+        cached_tree = self.cache_manager.get(tree_cache_key)
+        
+        if cached_tree and self.cache_manager.enabled:
+            logger.debug("Using cached page tree structure")
+            page_tree_structure = cached_tree
+            self._cache_stats['hits'] += 1
+        else:
+            logger.debug("Parsing page tree structure from HTML")
+            page_tree_structure = self._parse_page_tree_structure()
+            if self.cache_manager.enabled:
+                # Include file modification times for basic validation
+                file_stats = {
+                    'index_mtime': self.index_path.stat().st_mtime,
+                    'export_path': str(self.html_export_path)
+                }
+                self.cache_manager.set(tree_cache_key, page_tree_structure, 
+                                     validation_metadata=file_stats)
+            self._cache_stats['misses'] += 1
+        
+        # Parse space metadata
         space_metadata = self._parse_index_html()
-        page_tree_structure = self._parse_page_tree_structure()
         
         # Create space
         space = ConfluenceSpace(
@@ -156,8 +213,25 @@ class HtmlFetcher(BaseFetcher):
         Returns:
             Root ConfluencePage with children populated
         """
-        # Parse page tree from index
-        page_tree_structure = self._parse_page_tree_structure()
+        # Try to cache page tree structure parse
+        tree_cache_key = CacheManager.generate_cache_key('html_page_tree', export_path=str(self.html_export_path))
+        cached_tree = self.cache_manager.get(tree_cache_key)
+        
+        if cached_tree and self.cache_manager.enabled:
+            logger.debug("Using cached page tree structure")
+            page_tree_structure = cached_tree
+            self._cache_stats['hits'] += 1
+        else:
+            logger.debug("Parsing page tree structure from HTML")
+            page_tree_structure = self._parse_page_tree_structure()
+            if self.cache_manager.enabled:
+                file_stats = {
+                    'index_mtime': self.index_path.stat().st_mtime,
+                    'export_path': str(self.html_export_path)
+                }
+                self.cache_manager.set(tree_cache_key, page_tree_structure,
+                                     validation_metadata=file_stats)
+            self._cache_stats['misses'] += 1
         
         # Find page in tree
         page_info = self._find_page_in_tree(page_id, page_tree_structure)
@@ -177,19 +251,37 @@ class HtmlFetcher(BaseFetcher):
         Returns:
             ConfluencePage without children
         """
-        # Find page in tree
-        page_tree_structure = self._parse_page_tree_structure()
-        page_info = self._find_page_in_tree(page_id, page_tree_structure)
+        # Try to cache page tree structure parse
+        tree_cache_key = CacheManager.generate_cache_key('html_page_tree', export_path=str(self.html_export_path))
+        cached_tree = self.cache_manager.get(tree_cache_key)
         
+        if cached_tree and self.cache_manager.enabled:
+            logger.debug("Using cached page tree structure")
+            page_tree_structure = cached_tree
+            self._cache_stats['hits'] += 1
+        else:
+            logger.debug("Parsing page tree structure from HTML")
+            page_tree_structure = self._parse_page_tree_structure()
+            if self.cache_manager.enabled:
+                file_stats = {
+                    'index_mtime': self.index_path.stat().st_mtime,
+                    'export_path': str(self.html_export_path)
+                }
+                self.cache_manager.set(tree_cache_key, page_tree_structure,
+                                     validation_metadata=file_stats)
+            self._cache_stats['misses'] += 1
+        
+        # Find page in tree
+        page_info = self._find_page_in_tree(page_id, page_tree_structure)
         if not page_info:
             raise FetcherError(f"Page {page_id} not found in HTML export")
         
-        # Find page file
+        # Parse page file - _parse_page_file handles caching internally
         page_file = self._find_page_file(page_id, page_info.get('title', ''))
-        
-        # Parse page file
         space_key = page_info.get('space_key', 'EXPORT')
-        return self._parse_page_file(page_file, page_info, space_key)
+        page = self._parse_page_file(page_file, page_info, space_key)
+        
+        return page
     
     def build_documentation_tree(
         self,
@@ -218,6 +310,9 @@ class HtmlFetcher(BaseFetcher):
         tree.metadata['confluence_base_url'] = None  # Not available in HTML mode
         tree.metadata['filters_applied'] = filters or {}
         
+        # Add cache statistics for HTML mode
+        tree.metadata['cache_stats'] = self.get_cache_stats()
+        
         # Fetch spaces (usually just one from HTML export)
         spaces = self.fetch_spaces(space_keys)
         total_pages = 0
@@ -243,8 +338,13 @@ class HtmlFetcher(BaseFetcher):
         tree.metadata['total_pages_fetched'] = total_pages
         tree.metadata['total_attachments_fetched'] = total_attachments
         
+        # Update final cache stats
+        tree.metadata['cache_stats'].update(self.get_cache_stats())
+        
         logger.info(f"Documentation tree built: {len(spaces)} spaces, "
                    f"{total_pages} pages, {total_attachments} attachments from HTML export")
+        logger.info(f"HTML cache statistics: hits={self._cache_stats['hits']}, "
+                   f"misses={self._cache_stats['misses']}")
         
         return tree
     
@@ -282,7 +382,7 @@ class HtmlFetcher(BaseFetcher):
         if meta_desc and meta_desc.get('content'):
             metadata['description'] = meta_desc['content']
         
-        # Try to extract homepage ID
+        # Try to extracthomepage ID
         home_link = soup.find('a', href=True, text=lambda t: t and 'Home' in t)
         if home_link:
             homepage_id = self._extract_page_id_from_href(home_link['href'], 'Home')
@@ -535,30 +635,6 @@ class HtmlFetcher(BaseFetcher):
                 logger.debug(f"Error scanning file {html_file}: {str(e)}")
                 continue
         
-        # Last resort: parse all files with BeautifulSoup (expensive but accurate)
-        for html_file in html_files:
-            try:
-                with open(html_file, 'r', encoding='utf-8') as f:
-                    soup = BeautifulSoup(f, 'lxml')
-                    
-                    # Check page ID in various elements
-                    page_id_elem = soup.find(attrs={'data-page-id': page_id})
-                    if not page_id_elem:
-                        page_id_elem = soup.find(attrs={'page-id': page_id})
-                    
-                    if page_id_elem:
-                        logger.debug(f"Found page {page_id} via BeautifulSoup in: {html_file}")
-                        return html_file
-                    
-                    # Check title
-                    title_elem = soup.title or soup.find('h1')
-                    if title_elem and page_title in title_elem.get_text():
-                        logger.debug(f"Found page '{page_title}' via title in: {html_file}")
-                        return html_file
-            except Exception as e:
-                logger.debug(f"Error parsing file {html_file}: {str(e)}")
-                continue
-        
         # Not found
         raise FileNotFoundError(
             f"Page file not found for page_id={page_id}, title='{page_title}'. "
@@ -614,6 +690,28 @@ class HtmlFetcher(BaseFetcher):
             ConfluencePage model
         """
         logger.debug(f"Parsing page file: {page_file}")
+        
+        # Check if we should cache this parse based on file modification time
+        page_cache_key = CacheManager.generate_cache_key('html_page_file', page_id=page_info['id'])
+        cached_data = self.cache_manager.get(page_cache_key)
+        current_mtime = page_file.stat().st_mtime
+        
+        if cached_data and self.cache_manager.enabled:
+            # Validate file hasn't changed since last parse
+            cached_mtime = cached_data.get('file_mtime', 0)
+            if cached_mtime >= current_mtime:
+                logger.debug(f"Using cached parsed page {page_info['id']}")
+                self._cache_stats['hits'] += 1
+                # Return cached page data
+                return ConfluencePage(
+                    id=page_info['id'],
+                    title=page_info.get('title', 'Untitled'),
+                    content=cached_data.get('content', ''),
+                    space_key=space_key,
+                    parent_id=page_info.get('parent_id'),
+                    url=str(page_file.resolve()),
+                    metadata=cached_data.get('metadata', {})
+                )
         
         with open(page_file, 'r', encoding='utf-8', errors='ignore') as f:
             content = f.read()
@@ -694,6 +792,20 @@ class HtmlFetcher(BaseFetcher):
         attachments = self._identify_attachments(page.id, content_html)
         for attachment in attachments:
             page.add_attachment(attachment)
+        
+        # Cache the parsed result with file modification time
+        if self.cache_manager.enabled:
+            self.cache_manager.set(
+                page_cache_key,
+                {
+                    'page_id': page_info['id'],
+                    'content': content_html,
+                    'metadata': metadata,
+                    'file_mtime': current_mtime,
+                    'parsed_timestamp': time.time()
+                }
+            )
+            self._cache_stats['misses'] += 1
         
         return page
     

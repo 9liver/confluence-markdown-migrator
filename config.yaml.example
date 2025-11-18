@@ -241,11 +241,97 @@ advanced:
   # Minimum seconds between requests (default: 0.0)
   rate_limit: 0.0
   
-  # Enable caching of fetched content (default: false)
-  cache_enabled: false
+  # Caching configuration for minimizing API calls and runtime
+  cache:
+    # Enable caching of fetched content (default: false)
+    enabled: false
+    
+    # Cache mode: "disable", "always_use", "validate" (default: "validate")
+    # - "disable": No caching, always fetch fresh from API
+    # - "always_use": Use cached data even if expired (offline mode)
+    # - "validate": Check with Confluence if cached data is still valid (smart mode)
+    mode: "validate"
+    
+    # Cache directory path (default: "./.cache")
+    directory: "./.cache"
+    
+    # Cache TTL in seconds - how long to keep cached data (default: 86400 = 1 day)
+    ttl_seconds: 86400
+    
+    # Validate cache against Confluence using ETag/Last-Modified headers (default: true)
+    # Only applies when mode is "validate"
+    validate_with_headers: true
+    
+    # Cache attachments (binary files) in addition to API responses (default: true)
+    cache_attachments: true
+    
+    # Verify attachment checksums on cache retrieval (default: true)
+    verify_checksums: true
   
-  # Cache directory path (default: "./.cache")
-  cache_directory: "./.cache"
+  # Cache Modes Explained:
+  # - "validate": Recommended for most use cases. Checks with Confluence API if cached
+  #   content is still current using HTTP cache headers (ETag, Last-Modified). Only
+  #   downloads full content if changed. Minimizes API calls while ensuring freshness.
+  # - "always_use": Offline mode. Uses cached data without validation, even if expired.
+  #   Useful for working without network access or testing. May use stale data.
+  # - "disable": Always fetches fresh data from API. Use when cache is causing issues
+  #   or when you need guaranteed latest content. Slowest but most reliable.
   
-  # Cache TTL in seconds - how long to keep cached data (default: 86400 = 1 day)
-  cache_ttl_seconds: 86400
+  # Legacy cache settings (deprecated, use cache section above)
+  # cache_enabled: false  # Replaced by cache.enabled
+  # cache_directory: "./.cache"  # Replaced by cache.directory
+  # cache_ttl_seconds: 86400  # Replaced by cache.ttl_seconds
+  
+  # Integrity Verification:
+  # This feature performs comprehensive validation of fetched Confluence content to ensure
+  # completeness and correctness before conversion. It checks:
+  # - All referenced attachments/images are downloaded
+  # - Page hierarchy has no orphans or circular references
+  # - Internal links point to valid pages
+  # - Content checksums for tamper detection
+  # - Complete local backup for disaster recovery
+  #
+  # Recommended for production migrations to catch issues early.
+  integrity_verification:
+    # Enable integrity verification phase (default: false)
+    # When enabled, runs comprehensive checks after fetch and before conversion
+    enabled: false
+    
+    # Halt migration if integrity score falls below threshold (default: false)
+    # If true, stops migration when critical issues detected (e.g., >50% missing attachments)
+    halt_on_failure: false
+    
+    # Create complete local backup of fetched content (default: true)
+    # Saves raw HTML, metadata, and attachments to backup directory
+    create_backup: true
+    
+    # Backup directory path (default: "./integrity-backup")
+    backup_directory: "./integrity-backup"
+    
+    # Verification depth (default: "standard")
+    # Options:
+    #   - "basic": Check attachments and hierarchy only
+    #   - "standard": Add page checksums and link validation
+    #   - "full": Include external link validation (slower)
+    verification_depth: "standard"
+    
+    # Verify external links by checking HTTP status (default: false)
+    # Warning: Significantly increases verification time for pages with many external links
+    verify_external_links: false
+    
+    # Compute and store checksums for all content (default: true)
+    # SHA256 hashes for pages and attachments, stored in metadata
+    compute_checksums: true
+    
+    # Parallel workers for checksum computation (default: 3)
+    # Higher values speed up verification but increase CPU usage
+    checksum_workers: 3
+    
+    # Save verification report to file (default: true)
+    save_report: true
+    
+    # Report output formats (default: ["json", "console"])
+    # Options: "json", "console", "csv"
+    report_formats:
+      - "json"
+      - "console"

@@ -14,6 +14,7 @@ This tool provides a robust pipeline for migrating Confluence content while main
 - **Comprehensive Link Resolution**: Handles internal Confluence links and converts them appropriately
 - **Attachment Handling**: Downloads and references attachments with filtering options
 - **Interactive TUI**: Terminal-based interface using Textual framework for visual space and page selection with tree view, tri-state checkboxes (✓/~/[ ]), real-time search filtering, destination structure preview (Wiki.js paths or BookStack hierarchy based on export target), selection statistics (page count, attachments, size estimate), and keyboard shortcuts (m=migrate, a=select all, d=select, /=search, escape=clear, q=quit, ?=help)
+- **Smart Integrity Verification**: Comprehensive validation with checksums, hierarchy checks, and local backups
 - **Multiple Export Targets**: Export to local markdown files, Wiki.js, or BookStack
 - **Comprehensive Logging**: Structured logging with verbosity levels and progress tracking
 - **Dry-Run Mode**: Test migrations without making changes
@@ -191,6 +192,88 @@ Space Breakdown:
 
 ============================================================
 ```
+
+
+## Integrity Verification
+
+The tool includes comprehensive integrity verification to ensure all content is correctly fetched and saved locally before conversion. This minimizes data loss and catches issues early.
+
+### What is Verified
+
+- **Attachments**: All referenced images and files are downloaded and checksummed
+- **Hierarchy**: Page parent-child relationships are valid with no orphans or cycles
+- **Links**: Internal Confluence links point to existing pages
+- **Checksums**: SHA256 hashes computed for all pages and attachments
+- **Backup**: Complete local backup created with raw HTML and metadata
+
+### Configuration
+
+Enable in `config.yaml`:
+
+```yaml
+advanced:
+  integrity_verification:
+    enabled: true
+    verification_depth: "standard"  # basic, standard, or full
+    create_backup: true
+    backup_directory: "./integrity-backup"
+    halt_on_failure: false  # Stop migration if critical issues found
+```
+
+### Verification Modes
+
+- **Basic**: Checks attachments and hierarchy only (fastest)
+- **Standard**: Adds page checksums and internal link validation (recommended)
+- **Full**: Includes external link HTTP validation (slowest, thorough)
+
+### Reports
+
+Verification generates detailed reports with:
+- Integrity score (0-100%)
+- Missing attachments with page context
+- Orphan pages and circular references
+- Broken internal/external links
+- Actionable fix recommendations
+
+Reports saved to:
+- Console output (summary)
+- `{backup_directory}/integrity_report.json` (full details)
+- `{output_directory}/integrity_issues.csv` (issue list)
+
+### Performance Impact
+
+- **Basic/Standard**: Minimal overhead (~5-10% increase in runtime)
+- **Full**: Moderate overhead (~20-30% increase due to external link checks)
+- Checksum computation parallelized using `checksum_workers` setting
+- Leverages existing cache to avoid redundant API calls
+
+### When to Use
+
+- **Production migrations**: Always enable to catch issues before conversion
+- **Large spaces**: Use "standard" mode to balance speed and thoroughness
+- **Offline work**: Create backup for later processing without API access
+- **Compliance**: Checksums provide tamper detection for audit trails
+
+### CLI Usage Examples
+
+```bash
+# Run migration with integrity verification
+python migrate.py --mode api --spaces DEV --verify-integrity
+
+# Verify only (no conversion/export) - not yet implemented
+# python migrate.py --mode api --spaces DEV --verify-only
+```
+
+### Troubleshooting Integrity Issues
+
+**Problem**: Integrity score below 50%
+
+**Solutions**:
+1. Check `integrity_report.json` for specific issues
+2. Re-run fetch with `--force-refresh` to bypass cache
+3. Verify Confluence permissions for attachments
+4. Review broken link recommendations in report
+5. Use `--halt-on-failure false` to continue despite issues
 
 
 ### Fetcher System
@@ -567,14 +650,79 @@ See `config.yaml.example` for all available options and detailed documentation.
 
 ### Advanced Settings
 
+#### Cache Configuration
+
+The tool supports intelligent caching to minimize API calls and improve performance:
+
+##### Cache Modes
+
+- **`validate`** (recommended): Checks with Confluence if cached content is still current using HTTP cache headers (ETag, Last-Modified). Only downloads full content if changed. Best balance of performance and freshness.
+- **`always_use`**: Offline mode. Uses cached data without validation, even if expired. Useful for working without network access or testing. May use stale data.
+- **`disable`**: Always fetches fresh data from API. Use when cache is causing issues or when guaranteed latest content is required. Slowest but most reliable.
+
+##### Configuration Example
+
+```yaml
+advanced:
+  cache:
+    enabled: true
+    mode: "validate"  # or "always_use", "disable"
+    directory: "./.cache"
+    ttl_seconds: 86400  # 1 day
+    validate_with_headers: true
+    cache_attachments: true
+    verify_checksums: true
+```
+
+##### Cache Statistics
+
+After migration, the tool reports cache performance in the migration report:
+
+```
+Cache Statistics:
+Mode:        validate
+Hits:        450
+Misses:      50
+Hit Rate:    90.0%
+API Saved:   450 calls
+Validations: 50
+Cache Size:  125.34 MB
+Entries:     1200
+```
+
+**Cache Metrics Explained:**
+- **Hit Rate**: Percentage of requests served from cache
+- **API Saved**: Number of API requests avoided
+- **Validations**: Number of cache validation checks performed (304 responses)
+- **Invalidated**: Number of cache entries that were stale and refetched (200 responses)
+
+##### Cache Troubleshooting
+
+**Problem**: Stale or incorrect content in migration
+- **Solution**: Clear cache and re-run with `cache.mode: "disable"` or delete `.cache` directory
+
+**Problem**: Slow performance despite caching enabled
+- **Solution**: Check cache hit rate in report. If low, increase `ttl_seconds` or use `validate` mode for better cache reuse
+
+**Problem**: Cache validation errors
+- **Solution**: Ensure Confluence server returns proper ETag/Last-Modified headers. Set `validate_with_headers: false` to disable validation and use TTL-only caching
+
+##### Legacy Cache Settings
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `advanced.cache_enabled` | false | Replaced by `cache.enabled` (deprecated) |
+| `advanced.cache_directory` | "./.cache" | Replaced by `cache.directory` (deprecated) |
+| `advanced.cache_ttl_seconds` | 86400 | Replaced by `cache.ttl_seconds` (deprecated) |
+
+##### Advanced HTTP & Network Settings
+
 | Setting | Default | Description |
 |---------|---------|-------------|
 | `advanced.request_timeout` | 30s | HTTP timeout |
 | `advanced.max_retries` | 3 | Retry attempts |
 | `advanced.retry_backoff_factor` | 2.0 | Exponential backoff |
 | `advanced.rate_limit` | 0.0s | Minimum delay between requests |
-| `advanced.cache_enabled` | false | Enable in-memory response caching (default: false); disk caching forthcoming |
-| `advanced.cache_directory` | "./.cache" | Reserve path for future disk caching implementation |
 
 **Tip**: Increase `rate_limit` and reduce `batch_size` for slow networks or large Confluence instances.
 
@@ -873,6 +1021,32 @@ The tool does **not** perform automatic rollback on import failures. This is by 
 - **Review the migration report** before deciding whether to re-run or rollback
 - **Test imports on a staging instance** before production migrations
 
+**Performance Optimization with Caching:**
+
+- **Enable smart caching** for large migrations to minimize API calls:
+  ```yaml
+  advanced:
+    cache:
+      enabled: true
+      mode: "validate"  # Smart validation mode
+      ttl_seconds: 86400
+  ```
+- **Monitor cache statistics** in migration report - aim for hit rate >70%
+- **Use `validate` mode** (recommended) for most migrations - balances performance with freshness
+- **Use `always_use` mode** for offline testing or when Confluence is slow (may use stale cache)
+- **Clear cache before major migrations** if you've made significant changes in Confluence
+- **Cache attachments** to avoid re-downloading large files (set `cache_attachments: true`)
+- **Increase TTL** for stable content that doesn't change frequently
+
+**Cache-Specific Best Practices:**
+
+- **First migration**: Use default cache settings, let cache populate automatically
+- **Subsequent migrations**: Enable caching to benefit from previous fetch
+- **Testing/debugging**: Use `always_use` mode for fast, repeatable tests without API calls
+- **Production runs**: Use `validate` mode to ensure fresh content while minimizing API usage
+- **Monitor disk space**: Large attachment caches can grow quickly - monitor `./.cache` directory
+- **Clear stale cache**: Periodically clear cache: `rm -rf ./.cache/*` or use CLI `--clear-cache`
+
 **Re-running Failed Migrations:**
 
 If a migration fails partially:
@@ -891,6 +1065,15 @@ python migrate.py --export-target wikijs --spaces ENG
 # Re-run - will skip successful items and retry failures
 python migrate.py --export-target wikijs --spaces ENG --verbose
 ```
+
+**Incremental Migrations:**
+
+- Use `--since-date` to process only recently modified pages
+- Combine with caching for optimal performance on recurring migrations
+- Example: Weekly sync of only changed content
+  ```bash
+  python migrate.py --since-date 2024-01-01 --export-target wikijs
+  ```
 
 #### Additional Resources
 
@@ -1468,14 +1651,68 @@ migration:
 ```
 
 **Slow Performance**
-- Enable in-memory caching with `cache_enabled: true` to reduce redundant fetches within a single run
+- Enable smart caching with `validate` mode to reduce API calls while ensuring freshness
   ```yaml
   advanced:
-    cache_enabled: true
+    cache:
+      enabled: true
+      mode: "validate"  # Smart caching with HTTP validation
   ```
-- For resumability across runs, monitor progress logs and use `--since-date` for incremental migrations until disk caching is implemented in Phase 2
-- Reduce batch size for slower networks
+- Check cache hit rate in migration report - should be >70% for effective caching
+- Increase `ttl_seconds` for better cache reuse: `ttl_seconds: 172800` (2 days)
+- Reduce batch size for slower networks: `batch_size: 2`
 - Use `since_date` filter to process only recent changes
+
+### Cache Issues
+
+**Cache Configuration Problems**
+
+```yaml
+# Recommended cache configuration
+advanced:
+  cache:
+    enabled: true
+    mode: "validate"      # Smart validation mode
+    ttl_seconds: 86400    # 1 day cache lifetime
+    cache_attachments: true
+    verify_checksums: true
+```
+
+**Stale Content Despite Caching**
+- Check migration report for cache statistics
+- If hit rate is low, cache may not be working properly
+- Clear cache manually: `rm -rf ./.cache/*`
+- Verify cache directory permissions and disk space
+- Check logs for cache read/write errors
+
+**Cache Not Working (No Hits)**
+- Verify cache is enabled: `cache.enabled: true`
+- Check cache directory exists and is writable: `ls -la ./.cache`
+- Look for cache initialization in logs: `grep "Cache enabled" migration.log`
+- Ensure you're using API mode (HTML mode has limited caching)
+- Validate Confluence returns ETag/Last-Modified headers: `curl -I ${CONFLUENCE_URL}/rest/api/space`
+
+**Cache Validation Errors**
+- Disable header validation if Confluence doesn't support it:
+  ```yaml
+  advanced:
+    cache:
+      validate_with_headers: false  # Use TTL-only validation
+  ```
+- Check Confluence response headers: `curl -I ${URL} | grep -E "ETag|Last-Modified"`
+- Use `always_use` mode for offline testing (no validation performed)
+
+**Offline Mode (`always_use`)**
+- Uses cached data without network validation
+- Best for: testing, development, or when Confluence is unavailable
+- Warning: May use stale data - check cache age in stats
+- Example: `mode: "always_use"` with pre-populated cache
+
+**Cache Size & Disk Usage**
+- Monitor cache directory size: `du -sh ./.cache`
+- Large attachments can quickly fill cache - adjust `ttl_seconds` downward
+- Cache includes both API responses (JSON) and attachments (binary)
+- Clear old cache periodically: `find ./.cache -mtime +7 -delete`
 
 ### Content Fetching Issues
 

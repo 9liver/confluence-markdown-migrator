@@ -1,10 +1,12 @@
 """API fetcher implementation for retrieving Confluence content via REST API."""
 
 import fnmatch
+import hashlib
 import logging
 import os
-from typing import Any, Dict, List, Optional
+import time
 from datetime import datetime
+from typing import Any, Dict, List, Optional, Tuple
 
 from confluence_client import ConfluenceClient
 from models import (
@@ -13,8 +15,8 @@ from models import (
     ConfluenceSpace,
     DocumentationTree
 )
-from .base_fetcher import BaseFetcher
-from .cache_manager import CacheManager
+from .base_fetcher import BaseFetcher, FetcherError
+from .cache_manager import CacheManager, CacheMode
 
 logger = logging.getLogger('confluence_markdown_migrator.fetcher.api')
 
@@ -49,6 +51,10 @@ class ApiFetcher(BaseFetcher):
         self.retry_backoff_factor = float(advanced_config.get('retry_backoff_factor', 2.0))
         self.rate_limit = float(advanced_config.get('rate_limit', 0.0))
         
+        # Cache mode from config
+        cache_config = advanced_config.get('cache', {})
+        cache_mode = cache_config.get('mode', 'validate') if cache_config.get('enabled', False) else 'disable'
+        
         # Initialize Confluence client
         client_kwargs = {
             'base_url': base_url,
@@ -77,11 +83,19 @@ class ApiFetcher(BaseFetcher):
         self._page_cache: Dict[str, ConfluencePage] = {}
         self._page_fetch_counter = 0
         self._last_progress_log_time = 0
+        self._api_calls_made = 0
         
-        # Initialize cache manager
-        self.cache_manager = CacheManager(config)
+        # Initialize cache manager with mode
+        self.cache_manager = CacheManager(config, mode=cache_mode)
+        self.cache_stats = {
+            'api_calls': 0,
+            'cache_hits': 0,
+            'cache_misses': 0,
+            'validations': 0,
+            'invalidations': 0
+        }
         
-        logger.info(f"Initialized ApiFetcher for {base_url} with auth_type={auth_type}")
+        logger.info(f"Initialized ApiFetcher for {base_url} with auth_type={auth_type}, cache_mode={cache_mode}")
     
     def fetch_spaces(self, space_keys: Optional[List[str]] = None) -> List[ConfluenceSpace]:
         """
@@ -100,15 +114,36 @@ class ApiFetcher(BaseFetcher):
         if space_keys:
             cache_key = CacheManager.generate_cache_key('spaces_list', space_keys=','.join(sorted(space_keys)))
         
-        cached_data = self.cache_manager.get(cache_key)
+        api_spaces = None
+        validation_metadata = None
+        
+        # Use validation callback for VALIDATE mode if header validation is enabled
+        if (self.cache_manager.mode == CacheMode.VALIDATE and 
+            self.cache_manager.enabled and 
+            self.cache_manager.validate_with_headers):
+            def validate_spaces(cached_meta):
+                url = f"{self.client.base_url}/rest/api/space"
+                return self.client.validate_cache(
+                    url,
+                    etag=cached_meta.get('etag'),
+                    last_modified=cached_meta.get('last_modified')
+                )
+            
+            cached_data = self.cache_manager.get_with_validation(cache_key, validate_spaces)
+        else:
+            cached_data = self.cache_manager.get(cache_key)
         
         if cached_data:
             logger.info(f"Using cached spaces list")
             api_spaces = cached_data
+            self.cache_stats['cache_hits'] += 1
         else:
             logger.info(f"Cache miss - fetching spaces from API")
-            api_spaces = self.client.get_spaces()
-            self.cache_manager.set(cache_key, api_spaces)
+            self.cache_stats['cache_misses'] += 1
+            self.cache_stats['api_calls'] += 1
+            
+            api_spaces, validation_metadata = self.client.get_spaces(return_metadata=True)
+            self.cache_manager.set(cache_key, api_spaces, validation_metadata=validation_metadata)
         
         spaces = []
         
@@ -153,7 +188,7 @@ class ApiFetcher(BaseFetcher):
         else:
             try:
                 # Fetch all spaces and filter in Python (space_keys param not supported)
-                all_spaces = self.client.get_spaces()
+                all_spaces, _ = self.client.get_spaces(return_metadata=True)
                 matching_spaces = [s for s in all_spaces if s.get('key') == space_key]
                 if not matching_spaces:
                     raise ValueError(f"Space '{space_key}' not found")
@@ -195,14 +230,38 @@ class ApiFetcher(BaseFetcher):
             
             # Check cache for space content
             cache_key = CacheManager.generate_cache_key('space_content', space_key=space_key)
-            cached_data = self.cache_manager.get(cache_key)
+            all_pages_api = None
+            validation_metadata = None
+            
+            # Use validation callback for VALIDATE mode if header validation is enabled
+            if (self.cache_manager.mode == CacheMode.VALIDATE and 
+                self.cache_manager.enabled and 
+                self.cache_manager.validate_with_headers):
+                def validate_space_content(cached_meta):
+                    url = f"{self.client.base_url}/rest/api/content?spaceKey={space_key}"
+                    return self.client.validate_cache(
+                        url,
+                        etag=cached_meta.get('etag'),
+                        last_modified=cached_meta.get('last_modified')
+                    )
+                
+                cached_data = self.cache_manager.get_with_validation(cache_key, validate_space_content)
+            else:
+                cached_data = self.cache_manager.get(cache_key)
             
             if cached_data:
                 logger.info(f"Using cached space content for '{space_key}'")
                 all_pages_api = cached_data
+                self.cache_stats['cache_hits'] += 1
             else:
                 logger.info(f"Cache miss - fetching from API")
-                all_pages_api = self.client.get_space_content(space_key)
+                self.cache_stats['cache_misses'] += 1
+                self.cache_stats['api_calls'] += 1
+                
+                all_pages_api, validation_metadata = self.client.get_space_content(
+                    space_key, 
+                    return_metadata=True
+                )
                 
                 # Verify content is present in first few pages
                 if all_pages_api and len(all_pages_api) > 0:
@@ -213,7 +272,7 @@ class ApiFetcher(BaseFetcher):
                     logger.debug(f"Sample page {sample_page.get('id')}: has_body={has_body}, has_export_view={has_export_view}, has_view={has_view}")
                 
                 # Cache the API response
-                self.cache_manager.set(cache_key, all_pages_api)
+                self.cache_manager.set(cache_key, all_pages_api, validation_metadata=validation_metadata)
             
             # Log progress every 500 pages
             page_models = []
@@ -268,28 +327,52 @@ class ApiFetcher(BaseFetcher):
         
         # Check persistent cache
         cache_key = CacheManager.generate_cache_key('page_content', page_id=page_id)
-        cached_data = self.cache_manager.get(cache_key)
+        cached_data = None
+        validation_metadata = None
+        
+        # Use validation callback for VALIDATE mode if header validation is enabled
+        if (self.cache_manager.mode == CacheMode.VALIDATE and 
+            self.cache_manager.enabled and 
+            self.cache_manager.validate_with_headers):
+            def validate_page(cached_meta):
+                url = f"{self.client.base_url}/rest/api/content/{page_id}"
+                return self.client.validate_cache(
+                    url,
+                    etag=cached_meta.get('etag'),
+                    last_modified=cached_meta.get('last_modified')
+                )
+            
+            cached_data = self.cache_manager.get_with_validation(cache_key, validate_page)
+        else:
+            cached_data = self.cache_manager.get(cache_key)
         
         if cached_data:
             logger.debug(f"Using persistent cached page {page_id}")
             page_model = self._convert_api_page_to_model(cached_data)
             self._page_cache[page_id] = page_model
+            self.cache_stats['cache_hits'] += 1
             return page_model
         
         logger.debug(f"Cache miss - fetching page content for {page_id} from API")
+        self.cache_stats['cache_misses'] += 1
+        self.cache_stats['api_calls'] += 1
         
         # CRITICAL: Use body.export_view for highest fidelity HTML (not body.storage)
         expand_fields = 'body.export_view,body.view,ancestors,space,version,metadata.labels,history'
         
         try:
-            api_response = self.client.get_page(page_id, expand=expand_fields)
+            api_response, validation_metadata = self.client.get_page(
+                page_id, 
+                expand=expand_fields,
+                return_metadata=True
+            )
             logger.debug(f"API response for page {page_id}: {type(api_response)}")
         except Exception as e:
             logger.error(f"Failed to fetch page {page_id}: {str(e)}")
             raise
         
-        # Cache the API response
-        self.cache_manager.set(cache_key, api_response)
+        # Cache the API response with validation metadata
+        self.cache_manager.set(cache_key, api_response, validation_metadata=validation_metadata)
         
         page_model = self._convert_api_page_to_model(api_response)
         
@@ -325,6 +408,13 @@ class ApiFetcher(BaseFetcher):
         tree.metadata['confluence_base_url'] = self.config.get('confluence', {}).get('base_url')
         tree.metadata['filters_applied'] = filters or {}
         
+        # Add cache statistics tracking
+        tree.metadata['cache_stats'] = {
+            'enabled': self.cache_manager.enabled,
+            'mode': self.cache_manager.mode.value if hasattr(self.cache_manager, 'mode') else 'unknown',
+            'cache_dir': self.cache_manager.cache_dir if hasattr(self.cache_manager, 'cache_dir') else None
+        }
+        
         # Handle page_id filter early: fetch page to determine space
         if filters and 'page_id' in filters and filters['page_id']:
             page_id = filters['page_id']
@@ -344,6 +434,9 @@ class ApiFetcher(BaseFetcher):
                 att for page in space.get_all_pages() 
                 for att in page.attachments if not att.excluded
             ])
+            
+            # Final cache stats for this path
+            self._update_tree_cache_stats(tree)
             
             return tree
         
@@ -371,11 +464,37 @@ class ApiFetcher(BaseFetcher):
         tree.metadata['total_pages_fetched'] = total_pages
         tree.metadata['total_attachments_fetched'] = total_attachments
         
+        # Add final cache statistics
+        self._update_tree_cache_stats(tree)
+        
         # Log summary
         logger.info(f"Documentation tree built: {len(spaces)} spaces, "
                    f"{total_pages} pages, {total_attachments} attachments")
+        logger.info(f"Cache statistics: mode={self.cache_manager.mode.value}, "
+                   f"hits={self.cache_stats['cache_hits']}, misses={self.cache_stats['cache_misses']}, "
+                   f"api_calls_saved={self.cache_stats['cache_hits']}")
         
         return tree
+    
+    def _update_tree_cache_stats(self, tree: DocumentationTree) -> None:
+        """Update tree metadata with final cache statistics."""
+        manager_stats = self.cache_manager.get_stats()
+        
+        # Calculate total requests and include api_calls made
+        total_requests = manager_stats['hits'] + manager_stats['misses']
+        
+        tree.metadata['cache_stats'].update({
+            'hits': manager_stats['hits'],
+            'misses': manager_stats['misses'],
+            'validations': manager_stats['validations'],
+            'invalidations': manager_stats['invalidations'],
+            'hit_rate': manager_stats['hit_rate'],
+            'api_calls_saved': manager_stats['api_calls_saved'],
+            'api_calls_made': self.cache_stats['api_calls'],
+            'total_requests': total_requests,
+            'total_entries': manager_stats['total_entries'],
+            'total_size_mb': manager_stats['total_size_mb']
+        })
     
     def _fetch_page_recursive(self, page_id: str, depth: int = 0, max_depth: int = 50) -> ConfluencePage:
         """
@@ -405,10 +524,19 @@ class ApiFetcher(BaseFetcher):
         expand_fields = 'body.export_view,body.view,ancestors,space,version,metadata.labels,history'
         
         try:
-            api_response = self.client.get_page(page_id, expand=expand_fields)
+            api_response, validation_metadata = self.client.get_page(
+                page_id, 
+                expand=expand_fields,
+                return_metadata=True
+            )
+            self.cache_stats['api_calls'] += 1
         except Exception as e:
             logger.error(f"Failed to fetch page {page_id}: {str(e)}")
             raise
+        
+        # Cache the page
+        cache_key = CacheManager.generate_cache_key('page_content', page_id=page_id)
+        self.cache_manager.set(cache_key, api_response, validation_metadata=validation_metadata)
         
         # Convert to model
         page_model = self._convert_api_page_to_model(api_response)
@@ -418,7 +546,16 @@ class ApiFetcher(BaseFetcher):
         
         # Recursively fetch children
         try:
-            child_responses = self.client.get_page_children(page_id)
+            child_responses, child_metadata = self.client.get_page_children(
+                page_id, 
+                return_metadata=True
+            )
+            self.cache_stats['api_calls'] += 1
+            
+            # Cache children list
+            children_cache_key = CacheManager.generate_cache_key(f"page_{page_id}_children")
+            self.cache_manager.set(children_cache_key, child_responses, validation_metadata=child_metadata)
+            
             for child_response in child_responses:
                 child_model = self._fetch_page_recursive(child_response['id'], depth + 1, max_depth)
                 page_model.add_child(child_model)
@@ -428,8 +565,7 @@ class ApiFetcher(BaseFetcher):
         # Fetch attachments
         try:
             attachments = self._fetch_attachments_for_page(page_id)
-            for attachment in attachments:
-                page_model.add_attachment(attachment)
+            page_model.attachments = attachments
         except Exception as e:
             logger.warning(f"Failed to fetch attachments for page {page_id}: {str(e)}")
         
@@ -488,7 +624,7 @@ class ApiFetcher(BaseFetcher):
         
         page_metadata = {
             'author': author,
-            'last_modified': last_modified,
+            'last_modified': last_modifier,
             'version': version,
             'labels': labels,
             'content_type': content_type,
@@ -600,7 +736,7 @@ class ApiFetcher(BaseFetcher):
     
     def _fetch_attachments_for_page(self, page_id: str) -> List[ConfluenceAttachment]:
         """
-        Fetch attachments for page and apply exclusion rules.
+        Fetch attachments for page and apply exclusion rules, with caching.
         
         Args:
             page_id: Confluence page ID
@@ -610,25 +746,109 @@ class ApiFetcher(BaseFetcher):
         """
         logger.debug(f"Fetching attachments for page {page_id}")
         
-        try:
-            api_attachments = self.client.get_attachments(page_id)
-        except Exception as e:
-            logger.warning(f"Failed to fetch attachments for page {page_id}: {str(e)}")
-            return []
+        # Check cache for attachments list
+        attachments_cache_key = CacheManager.generate_cache_key(f"page_{page_id}_attachments")
+        api_attachments = None
+        attachments_meta = None
+        
+        # Use validation callback for VALIDATE mode if header validation is enabled
+        if (self.cache_manager.mode == CacheMode.VALIDATE and 
+            self.cache_manager.enabled and 
+            self.cache_manager.validate_with_headers):
+            def validate_attachments(cached_meta):
+                url = f"{self.client.base_url}/rest/api/content/{page_id}/child/attachment"
+                return self.client.validate_cache(
+                    url,
+                    etag=cached_meta.get('etag'),
+                    last_modified=cached_meta.get('last_modified')
+                )
+            
+            cached_attachments = self.cache_manager.get_with_validation(attachments_cache_key, validate_attachments)
+        else:
+            cached_attachments = self.cache_manager.get(attachments_cache_key)
+        
+        if cached_attachments:
+            logger.debug(f"Using cached attachments list for page {page_id}")
+            api_attachments = cached_attachments
+            self.cache_stats['cache_hits'] += 1
+        else:
+            logger.debug(f"Cache miss - fetching attachments for page {page_id} from API")
+            self.cache_stats['cache_misses'] += 1
+            self.cache_stats['api_calls'] += 1
+            
+            api_attachments, attachments_meta = self.client.get_attachments(
+                page_id, 
+                return_metadata=True
+            )
+            self.cache_manager.set(attachments_cache_key, api_attachments, validation_metadata=attachments_meta)
         
         export_config = self.config.get('export', {})
         attachment_config = export_config.get('attachment_handling', {})
         
         max_file_size = attachment_config.get('max_file_size', 52428800)  # 50MB default
         skip_file_types = attachment_config.get('skip_file_types', [])
+        attachments_dir = attachment_config.get('attachments_dir', './attachments')
         
         attachments = []
         
         for api_attachment in api_attachments:
             attachment = self._convert_api_attachment_to_model(api_attachment, page_id)
             
+            # Generate cache key for binary data
+            att_cache_key = CacheManager.generate_cache_key(
+                'attachment',
+                page_id=page_id,
+                att_id=attachment.id,
+                att_title=attachment.title
+            )
+            
+            # Try to get cached binary data
+            cached_binary = None
+            if not attachment.excluded:
+                cached_binary = self.cache_manager.get_binary(att_cache_key)
+            
+            if cached_binary is not None:
+                # Use cached attachment
+                attachment.local_path = os.path.join(attachments_dir, attachment.title)
+                attachment.cached = True
+                logger.debug(f"Using cached attachment: {attachment.title}")
+                self.cache_stats['cache_hits'] += 1
+            else:
+                # Download attachment if not excluded
+                if not attachment.excluded:
+                    try:
+                        logger.debug(f"Downloading attachment: {attachment.title}")
+                        self.cache_stats['api_calls'] += 1
+                        
+                        binary_data, download_meta = self.client.download_attachment(
+                            attachment.download_url,
+                            return_metadata=True
+                        )
+                        
+                        # Cache binary data
+                        self.cache_manager.set_binary(
+                            att_cache_key,
+                            binary_data,
+                            metadata={
+                                'media_type': attachment.media_type,
+                                'file_size': attachment.file_size,
+                                'page_id': page_id,
+                                'etag': download_meta.get('etag'),
+                                'last_modified': download_meta.get('last_modified')
+                            }
+                        )
+                        
+                        attachment.local_path = os.path.join(attachments_dir, attachment.title)
+                        attachment.cached = False
+                        self.cache_stats['cache_misses'] += 1
+                        
+                    except Exception as e:
+                        logger.warning(f"Failed to download attachment {attachment.title}: {str(e)}")
+                        attachment.excluded = True
+                        attachment.exclusion_reason = f"download_failed: {str(e)}"
+            
             # Apply exclusion rules
-            if skip_file_types:
+            if skip_file_types and not attachment.excluded:
                 file_ext = os.path.splitext(attachment.title)[1].lower()
                 if file_ext:
                     # Check against patterns (e.g., "*.exe", ".exe")
@@ -675,6 +895,7 @@ class ApiFetcher(BaseFetcher):
         
         try:
             search_results = self.client.search_content(cql, expand=expand_fields)
+            self.cache_stats['api_calls'] += 1
         except Exception as e:
             logger.error(f"CQL search failed: {str(e)}")
             raise
@@ -723,9 +944,9 @@ class ApiFetcher(BaseFetcher):
         
         logger.debug(f"Built hierarchy from {len(pages)} pages: {len(root_pages)} root pages")
         return root_pages
+    
     def _log_fetch_progress(self, page_id: str, depth: int):
         """Log progress every 50 pages and every 10 seconds."""
-        import time
         self._page_fetch_counter += 1
         current_time = time.time()
         

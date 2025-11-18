@@ -30,6 +30,7 @@ class ConfluenceAttachment:
     local_path: Optional[str] = None
     excluded: bool = False
     exclusion_reason: Optional[str] = None
+    content_checksum: Optional[str] = None
     
     def to_dict(self) -> Dict[str, Any]:
         """Serialize attachment to dictionary."""
@@ -42,7 +43,8 @@ class ConfluenceAttachment:
             'page_id': self.page_id,
             'local_path': self.local_path,
             'excluded': self.excluded,
-            'exclusion_reason': self.exclusion_reason
+            'exclusion_reason': self.exclusion_reason,
+            'content_checksum': self.content_checksum
         }
 
 
@@ -61,6 +63,7 @@ class ConfluencePage:
     metadata: Dict[str, Any] = field(default_factory=dict)
     markdown_content: Optional[str] = None
     conversion_metadata: Dict[str, Any] = field(default_factory=dict)
+    integrity_status: Optional[str] = None
     
     def __post_init__(self) -> None:
         """Initialize default metadata if empty."""
@@ -71,8 +74,13 @@ class ConfluencePage:
                 'version': 1,
                 'labels': [],
                 'content_type': 'page',
-                'content_source': 'api'
+                'content_source': 'api',
+                'content_checksum': None
             }
+        else:
+            # Ensure content_checksum exists in metadata
+            if 'content_checksum' not in self.metadata:
+                self.metadata['content_checksum'] = None
             
         if not self.conversion_metadata:
             self.conversion_metadata = {
@@ -83,8 +91,49 @@ class ConfluencePage:
                 'links_internal': 0,
                 'links_external': 0,
                 'images_count': 0,
-                'conversion_warnings': []
+                'conversion_warnings': [],
+                'markdown_checksum': None,
+                'link_verification': {
+                    'internal_links_valid': 0,
+                    'internal_links_broken': 0,
+                    'external_links_valid': 0,
+                    'external_links_broken': 0,
+                    'attachment_links_valid': 0,
+                    'attachment_links_broken': 0,
+                    'broken_link_details': []
+                },
+                'attachment_verification': {
+                    'total_refs': 0,
+                    'found': 0,
+                    'missing': 0,
+                    'missing_details': []
+                }
             }
+        else:
+            # Ensure integrity-related fields exist
+            if 'markdown_checksum' not in self.conversion_metadata:
+                self.conversion_metadata['markdown_checksum'] = None
+            if 'link_verification' not in self.conversion_metadata:
+                self.conversion_metadata['link_verification'] = {
+                    'internal_links_valid': 0,
+                    'internal_links_broken': 0,
+                    'external_links_valid': 0,
+                    'external_links_broken': 0,
+                    'attachment_links_valid': 0,
+                    'attachment_links_broken': 0,
+                    'broken_link_details': []
+                }
+            if 'attachment_verification' not in self.conversion_metadata:
+                self.conversion_metadata['attachment_verification'] = {
+                    'total_refs': 0,
+                    'found': 0,
+                    'missing': 0,
+                    'missing_details': []
+                }
+        
+        # Initialize integrity status
+        if self.integrity_status is None:
+            self.integrity_status = 'pending'
     
     def add_child(self, child: 'ConfluencePage') -> None:
         """Add a child page."""
@@ -123,7 +172,8 @@ class ConfluencePage:
             'url': self.url,
             'metadata': self.metadata,
             'markdown_content': self.markdown_content,
-            'conversion_metadata': self.conversion_metadata
+            'conversion_metadata': self.conversion_metadata,
+            'integrity_status': self.integrity_status
         }
     
     def __eq__(self, other: Any) -> bool:
@@ -204,6 +254,7 @@ class DocumentationTree:
     
     spaces: Dict[str, ConfluenceSpace] = field(default_factory=dict)
     metadata: Dict[str, Any] = field(default_factory=dict)
+    integrity_report: Optional[Dict[str, Any]] = None
     
     def __post_init__(self) -> None:
         """Initialize default metadata if empty."""
@@ -214,8 +265,22 @@ class DocumentationTree:
                 'confluence_base_url': None,
                 'filters_applied': {},
                 'total_pages_fetched': 0,
-                'total_attachments_fetched': 0
+                'total_attachments_fetched': 0,
+                'integrity_verified': False,
+                'integrity_timestamp': None,
+                'integrity_score': 0.0,
+                'backup_path': None
             }
+        else:
+            # Ensure integrity-related fields exist
+            if 'integrity_verified' not in self.metadata:
+                self.metadata['integrity_verified'] = False
+            if 'integrity_timestamp' not in self.metadata:
+                self.metadata['integrity_timestamp'] = None
+            if 'integrity_score' not in self.metadata:
+                self.metadata['integrity_score'] = 0.0
+            if 'backup_path' not in self.metadata:
+                self.metadata['backup_path'] = None
     
     def add_space(self, space: ConfluenceSpace) -> None:
         """Add a space to the documentation tree."""
@@ -262,7 +327,7 @@ class DocumentationTree:
             elif status == 'partial':
                 total_partial += 1
         
-        return {
+        stats = {
             'spaces': len(self.spaces),
             'pages': total_pages,
             'attachments': total_attachments,
@@ -273,12 +338,24 @@ class DocumentationTree:
                 'pending': total_pages - (total_failed + total_success + total_partial)
             }
         }
+        
+        # Add integrity statistics if available
+        if self.integrity_report:
+            stats['integrity_verified'] = True
+            stats['integrity_score'] = self.integrity_report.get('summary', {}).get('integrity_score', 0.0)
+            stats['integrity_issues'] = self.integrity_report.get('summary', {}).get('total_issues', 0)
+        else:
+            stats['integrity_verified'] = self.metadata.get('integrity_verified', False)
+            stats['integrity_score'] = self.metadata.get('integrity_score', 0.0)
+        
+        return stats
     
     def to_dict(self) -> Dict[str, Any]:
         """Serialize tree to dictionary."""
         return {
             'spaces': {key: space.to_dict() for key, space in self.spaces.items()},
-            'metadata': self.metadata
+            'metadata': self.metadata,
+            'integrity_report': self.integrity_report
         }
     
     @classmethod
@@ -288,6 +365,9 @@ class DocumentationTree:
         
         if 'metadata' in data:
             tree.metadata = data['metadata']
+        
+        if 'integrity_report' in data:
+            tree.integrity_report = data['integrity_report']
         
         for space_key, space_data in data.get('spaces', {}).items():
             space = ConfluenceSpace(
@@ -335,7 +415,8 @@ class DocumentationTree:
                 page_id=attachment_data['page_id'],
                 local_path=attachment_data.get('local_path'),
                 excluded=attachment_data.get('excluded', False),
-                exclusion_reason=attachment_data.get('exclusion_reason')
+                exclusion_reason=attachment_data.get('exclusion_reason'),
+                content_checksum=attachment_data.get('content_checksum')
             )
             page.add_attachment(attachment)
         
