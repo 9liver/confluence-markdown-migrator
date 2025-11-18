@@ -1,0 +1,17 @@
+# Test configuration for cache functionality
+confluence:
+  base_url: "https://confluence.example.com"
+  auth_type: "basic"
+  username: "test"
+  password: "test"
+  verify_ssl: false
+
+migration:
+  mode: "api"
+  export_target: "markdown_files"
+  cache_enabled: true
+
+advanced:
+  cache_enabled: true
+  cache_directory: "./.cache"
+  cache_ttl_seconds: 86400

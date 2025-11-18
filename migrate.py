@@ -96,6 +96,24 @@ Examples:
     )
     
     parser.add_argument(
+        '--cache-clear',
+        action='store_true',
+        help='Clear the local cache before running migration'
+    )
+    
+    parser.add_argument(
+        '--cache-stats',
+        action='store_true',
+        help='Display cache statistics and exit'
+    )
+    
+    parser.add_argument(
+        '--cache-clear-pattern',
+        type=str,
+        help='Clear cache entries matching pattern (supports wildcards)'
+    )
+    
+    parser.add_argument(
         '--resume',
         action=argparse.BooleanOptionalAction,
         default=None,
@@ -560,10 +578,49 @@ def main() -> int:
         # Log sanitized configuration
         log_config(config)
         
+        # Handle cache management commands
+        if args.cache_stats or args.cache_clear or args.cache_clear_pattern:
+            from fetchers.cache_manager import CacheManager
+            cache_manager = CacheManager(config)
+            
+            if args.cache_stats:
+                stats = cache_manager.get_stats()
+                print("\n" + "="*60)
+                print("CACHE STATISTICS")
+                print("="*60)
+                if stats['enabled']:
+                    print(f"Cache Directory: {stats['cache_dir']}")
+                    print(f"TTL: {stats['ttl_seconds']} seconds ({stats['ttl_seconds']/86400:.1f} days)")
+                    print(f"Total Entries: {stats['total_entries']}")
+                    print(f"Total Size: {stats['total_size_mb']} MB")
+                    print(f"Expired Entries: {stats['expired_entries']}")
+                else:
+                    print("Cache is disabled")
+                print("="*60 + "\n")
+                return 0
+            
+            if args.cache_clear_pattern:
+                cleared = cache_manager.clear(args.cache_clear_pattern)
+                print(f"Cleared {cleared} cache entries matching '{args.cache_clear_pattern}'")
+                return 0
+            
+            if args.cache_clear:
+                cleared = cache_manager.clear()
+                print(f"Cleared all {cleared} cache entries")
+                return 0
+        
         # Validate runtime configuration
         if not validate_configuration(config, args, logger):
             logger.error("Runtime configuration validation failed")
             return 2
+        
+        # Clear cache if requested (after validation, before migration)
+        if args.cache_clear:
+            from fetchers.cache_manager import CacheManager
+            cache_manager = CacheManager(config)
+            if cache_manager.enabled:
+                cleared = cache_manager.clear()
+                logger.info(f"Cleared {cleared} cache entries before migration")
         
         # Run migration
         exit_code = run_migration(config, args, logger)

@@ -14,6 +14,7 @@ from models import (
     DocumentationTree
 )
 from .base_fetcher import BaseFetcher
+from .cache_manager import CacheManager
 
 logger = logging.getLogger('confluence_markdown_migrator.fetcher.api')
 
@@ -77,6 +78,9 @@ class ApiFetcher(BaseFetcher):
         self._page_fetch_counter = 0
         self._last_progress_log_time = 0
         
+        # Initialize cache manager
+        self.cache_manager = CacheManager(config)
+        
         logger.info(f"Initialized ApiFetcher for {base_url} with auth_type={auth_type}")
     
     def fetch_spaces(self, space_keys: Optional[List[str]] = None) -> List[ConfluenceSpace]:
@@ -91,7 +95,21 @@ class ApiFetcher(BaseFetcher):
         """
         logger.info(f"Fetching spaces from Confluence API")
         
-        api_spaces = self.client.get_spaces()
+        # Check cache for spaces list
+        cache_key = CacheManager.generate_cache_key('spaces_list')
+        if space_keys:
+            cache_key = CacheManager.generate_cache_key('spaces_list', space_keys=','.join(sorted(space_keys)))
+        
+        cached_data = self.cache_manager.get(cache_key)
+        
+        if cached_data:
+            logger.info(f"Using cached spaces list")
+            api_spaces = cached_data
+        else:
+            logger.info(f"Cache miss - fetching spaces from API")
+            api_spaces = self.client.get_spaces()
+            self.cache_manager.set(cache_key, api_spaces)
+        
         spaces = []
         
         for api_space in api_spaces:
@@ -174,7 +192,19 @@ class ApiFetcher(BaseFetcher):
         # Default: fetch all top-level pages recursively (optimized path)
         else:
             logger.info(f"Fetching all pages in space '{space_key}'")
-            all_pages_api = self.client.get_space_content(space_key)
+            
+            # Check cache for space content
+            cache_key = CacheManager.generate_cache_key('space_content', space_key=space_key)
+            cached_data = self.cache_manager.get(cache_key)
+            
+            if cached_data:
+                logger.info(f"Using cached space content for '{space_key}'")
+                all_pages_api = cached_data
+            else:
+                logger.info(f"Cache miss - fetching from API")
+                all_pages_api = self.client.get_space_content(space_key)
+                # Cache the API response
+                self.cache_manager.set(cache_key, all_pages_api)
             
             # Log progress every 500 pages
             page_models = []
@@ -222,12 +252,22 @@ class ApiFetcher(BaseFetcher):
         Returns:
             ConfluencePage without children loaded
         """
-        # Check cache first
+        # Check runtime cache first
         if page_id in self._page_cache:
-            logger.debug(f"Using cached page {page_id}")
+            logger.debug(f"Using runtime cached page {page_id}")
             return self._page_cache[page_id]
         
-        logger.debug(f"Fetching page content for {page_id}")
+        # Check persistent cache
+        cache_key = CacheManager.generate_cache_key('page_content', page_id=page_id)
+        cached_data = self.cache_manager.get(cache_key)
+        
+        if cached_data:
+            logger.debug(f"Using persistent cached page {page_id}")
+            page_model = self._convert_api_page_to_model(cached_data)
+            self._page_cache[page_id] = page_model
+            return page_model
+        
+        logger.debug(f"Cache miss - fetching page content for {page_id} from API")
         
         # CRITICAL: Use body.export_view for highest fidelity HTML (not body.storage)
         expand_fields = [
@@ -245,9 +285,12 @@ class ApiFetcher(BaseFetcher):
             logger.error(f"Failed to fetch page {page_id}: {str(e)}")
             raise
         
+        # Cache the API response
+        self.cache_manager.set(cache_key, api_response)
+        
         page_model = self._convert_api_page_to_model(api_response)
         
-        # Cache the page
+        # Cache the page in runtime cache
         self._page_cache[page_id] = page_model
         
         return page_model

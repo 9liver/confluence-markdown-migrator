@@ -246,3 +246,6 @@ advanced:
   
   # Cache directory path (default: "./.cache")
   cache_directory: "./.cache"
+  
+  # Cache TTL in seconds - how long to keep cached data (default: 86400 = 1 day)
+  cache_ttl_seconds: 86400

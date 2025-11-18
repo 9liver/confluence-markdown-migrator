@@ -175,6 +175,20 @@ class ConfigLoader:
         batch_size = get_nested(config, 'migration.batch_size', 5)
         if not isinstance(batch_size, int) or batch_size < 1:
             raise ValueError("migration.batch_size must be a positive integer")
+            
+        # Validate cache settings
+        cache_enabled = get_nested(config, 'advanced.cache_enabled', False)
+        if not isinstance(cache_enabled, bool):
+            raise ValueError("advanced.cache_enabled must be a boolean")
+        
+        if cache_enabled:
+            cache_ttl = get_nested(config, 'advanced.cache_ttl_seconds', 86400)
+            if not isinstance(cache_ttl, int) or cache_ttl < 0:
+                raise ValueError("advanced.cache_ttl_seconds must be a non-negative integer")
+            
+            cache_dir = get_nested(config, 'advanced.cache_directory', './.cache')
+            if cache_dir and not isinstance(cache_dir, str):
+                raise ValueError("advanced.cache_directory must be a string")
     
     @classmethod
     def merge_with_args(cls, config: Dict[str, Any], args) -> Dict[str, Any]:
