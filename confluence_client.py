@@ -78,7 +78,7 @@ class ConfluenceClient:
             total=max_retries,
             backoff_factor=retry_backoff_factor,
             status_forcelist=[429, 500, 502, 503, 504],
-            method_whitelist=["HEAD", "GET", "OPTIONS"]
+            allowed_methods=["HEAD", "GET", "OPTIONS"]
         )
         
         # Mount adapter with retry strategy
