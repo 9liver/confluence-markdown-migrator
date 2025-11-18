@@ -480,6 +480,16 @@ class ApiFetcher(BaseFetcher):
         """Update tree metadata with final cache statistics."""
         manager_stats = self.cache_manager.get_stats()
         
+        # Log cache statistics for visibility
+        logger.info(f"Cache manager stats: enabled={manager_stats.get('enabled', False)}, "
+                   f"mode={manager_stats.get('mode', 'unknown')}, "
+                   f"total_entries={manager_stats.get('total_entries', 0)}, "
+                   f"total_size_mb={manager_stats.get('total_size_mb', 0.0):.2f}, "
+                   f"hits={manager_stats.get('hits', 0)}, "
+                   f"misses={manager_stats.get('misses', 0)}, "
+                   f"hit_rate={manager_stats.get('hit_rate', 0.0):.2%}, "
+                   f"api_calls_saved={manager_stats.get('api_calls_saved', 0)}")
+        
         # Calculate total requests and include api_calls made
         total_requests = manager_stats['hits'] + manager_stats['misses']
         
@@ -493,7 +503,7 @@ class ApiFetcher(BaseFetcher):
             'api_calls_made': self.cache_stats['api_calls'],
             'total_requests': total_requests,
             'total_entries': manager_stats['total_entries'],
-            'total_size_mb': manager_stats['total_size_mb']
+            'total_size_mb': manager_stats.get('total_size_mb', 0.0)
         })
     
     def _fetch_page_recursive(self, page_id: str, depth: int = 0, max_depth: int = 50) -> ConfluencePage:

@@ -413,6 +413,7 @@ class CacheManager:
                 'mode': self.mode.value if hasattr(self, 'mode') else 'disable',
                 'total_entries': 0,
                 'total_size_bytes': 0,
+                'total_size_mb': 0.0,
                 'hits': 0,
                 'misses': 0,
                 'validations': 0,
