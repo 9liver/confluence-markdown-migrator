@@ -624,7 +624,7 @@ class ApiFetcher(BaseFetcher):
         
         page_metadata = {
             'author': author,
-            'last_modified': last_modifier,
+            'last_modified': last_modified,
             'version': version,
             'labels': labels,
             'content_type': content_type,
