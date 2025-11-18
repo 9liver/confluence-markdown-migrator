@@ -173,6 +173,19 @@ class ConfluenceSpace:
                     return p
         return None
     
+    def get_all_pages(self) -> List[ConfluencePage]:
+        """Get all pages in this space including child pages."""
+        all_pages = []
+        
+        def collect_pages(pages):
+            for page in pages:
+                all_pages.append(page)
+                if page.children:
+                    collect_pages(page.children)
+        
+        collect_pages(self.pages)
+        return all_pages
+    
     def to_dict(self) -> Dict[str, Any]:
         """Serialize space to dictionary."""
         return {

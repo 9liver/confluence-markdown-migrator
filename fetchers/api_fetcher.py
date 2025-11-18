@@ -74,6 +74,8 @@ class ApiFetcher(BaseFetcher):
         # Initialize caches
         self._space_cache: Dict[str, ConfluenceSpace] = {}
         self._page_cache: Dict[str, ConfluencePage] = {}
+        self._page_fetch_counter = 0
+        self._last_progress_log_time = 0
         
         logger.info(f"Initialized ApiFetcher for {base_url} with auth_type={auth_type}")
     
@@ -169,14 +171,25 @@ class ApiFetcher(BaseFetcher):
             pages = self._search_pages_by_date(space_key, filters['since_date'])
             space.pages = self._build_hierarchy_from_flat_list(pages)
         
-        # Default: fetch all top-level pages recursively
+        # Default: fetch all top-level pages recursively (optimized path)
         else:
             logger.info(f"Fetching all pages in space '{space_key}'")
-            top_level_pages = self.client.get_space_content(space_key)
+            all_pages_api = self.client.get_space_content(space_key)
             
-            for api_page in top_level_pages:
-                page_model = self._fetch_page_recursive(api_page['id'])
-                space.add_page(page_model)
+            # Log progress every 500 pages
+            page_models = []
+            logger.info(f"Converting {len(all_pages_api)} API responses to page models...")
+            
+            for idx, api_page in enumerate(all_pages_api):
+                if idx % 500 == 0 and idx > 0:
+                    logger.info(f"Converted {idx}/{len(all_pages_api)} page models...")
+                page_model = self._convert_api_page_to_model(api_page)
+                page_models.append(page_model)
+            
+            # Build hierarchy from flat list (much faster than recursive fetching)
+            logger.info("Building page hierarchy from flat list...")
+            space.pages = self._build_hierarchy_from_flat_list(page_models)
+            logger.info(f"Built hierarchy with {len(space.pages)} root pages")
         
         # Apply filters and return
         if filters:
@@ -340,6 +353,7 @@ class ApiFetcher(BaseFetcher):
             return self._page_cache[page_id]
         
         logger.debug(f"Fetching page {page_id} (depth={depth})")
+        self._log_fetch_progress(page_id, depth)
         
         # Fetch page with expansions
         expand_fields = [
@@ -670,3 +684,14 @@ class ApiFetcher(BaseFetcher):
         
         logger.debug(f"Built hierarchy from {len(pages)} pages: {len(root_pages)} root pages")
         return root_pages
+    def _log_fetch_progress(self, page_id: str, depth: int):
+        """Log progress every 50 pages and every 10 seconds."""
+        import time
+        self._page_fetch_counter += 1
+        current_time = time.time()
+        
+        # Log every 50 pages or every 10 seconds, whichever comes first
+        if (self._page_fetch_counter % 50 == 0 or 
+            (current_time - self._last_progress_log_time) > 10):
+            self._last_progress_log_time = current_time
+            logger.info(f"Fetched {self._page_fetch_counter} pages so far (current: {page_id}, depth: {depth})")

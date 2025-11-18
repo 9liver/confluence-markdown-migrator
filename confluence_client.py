@@ -271,6 +271,7 @@ class ConfluenceClient:
         """
         pages = []
         start = 0
+        last_log_time = time.time()
         
         while True:
             params = {
@@ -284,11 +285,16 @@ class ConfluenceClient:
             
             pages.extend(data['results'])
             
+            # Log progress every 500 pages or every 10 seconds
+            current_time = time.time()
+            if len(pages) % 500 == 0 or (current_time - last_log_time) > 10:
+                logger.info(f"Fetching pages from space '{space_key}': {len(pages)} pages retrieved so far...")
+                last_log_time = current_time
+            
             if 'next' not in data.get('_links', {}):
                 break
             
             start += limit
-            logger.debug(f"Fetched {len(pages)} top-level pages so far...")
         
         logger.info(f"Fetched {len(pages)} top-level pages from space '{space_key}'")
         return pages
