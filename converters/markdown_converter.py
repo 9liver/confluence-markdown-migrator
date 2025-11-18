@@ -1,6 +1,7 @@
 """Markdown converter orchestrator for high-fidelity HTML to Markdown conversion."""
 
 import logging
+import re
 from datetime import datetime
 from typing import Any, Dict, Optional, List
 
