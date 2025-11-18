@@ -526,7 +526,7 @@ def main() -> int:
         else:
             log_level = 'WARNING'
         
-        setup_logging(level=log_level, config={})
+        setup_logging(level=log_level)
         logger = logging.getLogger(__name__)
         
         log_section("Confluence to Markdown Migration Tool")
@@ -546,7 +546,13 @@ def main() -> int:
             return 2
         
         # Reconfigure logging with config file settings
-        setup_logging(config=config, level=log_level)
+        logging_config = config.get('logging', {})
+        setup_logging(
+            level=logging_config.get('level', log_level),
+            log_file=logging_config.get('file'),
+            log_format=logging_config.get('format'),
+            date_format=logging_config.get('date_format')
+        )
         logger = logging.getLogger(__name__)
         
         # Log sanitized configuration
