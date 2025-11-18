@@ -1,0 +1,110 @@
+"""CSS stylesheet for interactive migration TUI."""
+
+/* Main layout */
+Screen {
+    layout: vertical;
+    background: $surface;
+}
+
+Header {
+    dock: top;
+    background: $primary;
+}
+
+Footer {
+    dock: bottom;
+    background: $panel;
+}
+
+Horizontal {
+    width: 100%;
+    height: 1fr;
+    background: $surface;
+}
+
+/* Left pane - Tree and Search */
+#left-pane {
+    width: 50%;
+    padding: 0 1;
+    background: $surface;
+    border-right: solid $primary;
+}
+
+/* Right pane - Preview and Statistics */
+#right-pane {
+    width: 50%;
+    padding: 0 1;
+    background: $surface;
+}
+
+/* Search input */
+SearchInput {
+    border: solid $accent;
+    margin: 1 0;
+    width: 100%;
+    height: 3;
+}
+
+SearchInput:focus {
+    border: solid $accent-darken-1;
+}
+
+/* Tree view */
+ConfluenceTreeView {
+    border: solid $primary;
+    height: 1fr;
+    overflow-y: auto;
+    scrollbar-gutter: stable;
+    padding: 0 1;
+}
+
+ConfluenceTreeView:focus {
+    border: solid $primary-darken-1;
+}
+
+/* Preview pane */
+PreviewPane {
+    border: solid $success;
+    height: 2fr;
+    padding: 1;
+    margin: 1 0 1 0;
+    overflow-y: auto;
+    background: $surface;
+}
+
+/* Statistics panel */
+StatisticsPanel {
+    border: solid $warning;
+    height: 1fr;
+    min-height: 12;
+    padding: 1;
+    background: $surface;
+}
+
+/* Selection store (hidden) */
+SelectionStore {
+    display: none;
+}
+
+/* Loading state */
+.loading {
+    opacity: 0.6;
+}
+
+/* Notification styles */
+Notification {
+    margin: 1;
+    padding: 1;
+}
+
+Notification.-information {
+    border: solid $primary;
+}
+
+Notification.-warning {
+    border: solid $warning;
+}
+
+Notification.-error {
+    border: solid $error;
+}

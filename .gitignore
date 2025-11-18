@@ -1,0 +1,382 @@
+# Confluence to Markdown Migration Tool - Git Ignore File
+
+################################################################################
+# Python
+################################################################################
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# C extensions
+*.so
+
+# Distribution / packaging
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+pip-wheel-metadata/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# PyInstaller
+*.manifest
+*.spec
+
+# Installer logs
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Unit test / coverage reports
+htmlcov/
+.tox/
+.nox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.py,cover
+.hypothesis/
+.pytest_cache/
+
+# Pytest
+cover/
+
+# Translations
+*.mo
+*.pot
+
+# Django stuff
+*.log
+local_settings.py
+db.sqlite3
+db.sqlite3-journal
+
+# Flask stuff
+instance/
+.webassets-cache
+
+# Scrapy stuff
+.scrapy
+
+# Sphinx documentation
+docs/_build/
+
+# PyBuilder
+target/
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# IPython
+profile_default/
+ipython_config.py
+
+# pipenv
+Pipfile.lock
+
+# PEP 582
+__pypackages__/
+
+# Celery stuff
+celerybeat-schedule
+celerybeat.pid
+
+# SageMath parsed files
+*.sage.py
+
+# Environments
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# Spyder project settings
+.spyderproject
+.spyproject
+
+# Rope project settings
+.ropeproject
+
+# mkdocs documentation
+/site
+
+# mypy
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# Pyre type checker
+.pyre/
+
+# pytype static type analyzer
+.pytype/}
+
+################################################################################
+# Configuration files with sensitive data
+################################################################################
+# Actual configuration file (copy from config.yaml.example)
+config.yaml
+config.yml
+*.local.yaml
+*.local.yml
+
+# Environment variable files
+.env.local
+.env.production
+.env.staging
+
+# Backup configuration files
+*config*.backup
+*config*.bak
+
+################################################################################
+# Logs
+################################################################################
+# Log files
+*.log
+*.logs
+log/
+logs/
+migration-*.log
+
+# Log directories with varying names
+**/logs/
+**/log/
+
+################################################################################
+# Cache
+################################################################################
+# Cache directories
+.cache/
+.cache/
+**/.cache/
+.cache/
+
+# Cache files
+*.cache
+*.tmp
+*.temp
+*.swp
+*.swo
+*~
+
+################################################################################
+# Export Output
+################################################################################
+# Default export directory
+confluence-export/
+confluence_export/
+export/
+
+# Migration reports
+migration-report*.json
+migration-report*.yaml
+migration-report*.yml
+
+# Temporary export directories
+*/temp-export/
+*/temp_export/
+
+################################################################################
+# IDE / Editor
+################################################################################
+# Visual Studio Code
+.vscode/
+*.code-workspace
+
+# IntelliJ / PyCharm
+.idea/
+*.iml
+*.ipr
+*.iws
+
+# Sublime Text
+*.sublime-project
+*.sublime-workspace
+
+# Vim
+*.swp
+*.swo
+.*.swp
+.*.swo
+*~
+
+# Emacs
+*~
+\#*\#
+.\#*
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# Linux
+*~
+.fuse_hidden*
+.directory
+.Trash-*
+
+################################################################################
+# OS Generated Files
+################################################################################
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+*.lnk
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+.DocumentRevisions-V100
+.fseventsd
+.Spotlight-V100
+.TemporaryItems
+.Trashes
+.VolumeIcon.icns
+.com.apple.timemachine.donotpresent
+
+# Linux
+*~
+.fuse_hidden*
+.directory
+.Trash-*
+.nfs.*
+
+################################################################################
+# Testing
+################################################################################
+# Coverage reports
+htmlcov/
+.coverage
+.coverage.*
+.cache
+.pytest_cache/
+coverage.xml
+*.cover
+.hypothesis/
+
+# Test reports
+test-reports/
+test_reports/
+
+# Benchmark results
+.benchmarks/
+
+################################################################################
+# Documentation
+################################################################################
+# Built documentation
+docs/_build/
+_site/
+
+# Temporary documentation files
+*.tmp.md
+*.temp.md
+
+################################################################################
+# Security
+################################################################################
+# SSH keys
+*.pem
+*.key
+*.private
+*.pub
+id_rsa
+id_ecdsa
+id_ed25519
+
+# Certificate files
+*.crt
+*.cer
+*.der
+*.p12
+*.pfx
+
+################################################################################
+# Temporary and backup files
+################################################################################
+# Temporary files
+*.tmp
+*.temp
+*.swp
+*.swo
+*~
+~*
+
+# Backup files
+*.backup
+*.bak
+*.orig
+*.rej
+*.old
+
+# Auto-generated files
+*.generated
+*.auto
+
+################################################################################
+# Project-specific
+################################################################################
+# Python virtual environment
+venv/
+env/
+.venv/
+.ENV/
+
+# Distribution packages
+dist/
+build/
+*.egg-info/
+
+# Local development files
+.local/
+.dev/
+
+# Generated files from migration
+tree.json
+pages.json
+attachments.json
+
+################################################################################
+# Sensitive patterns (ensure nothing leaks)
+################################################################################
+# Files containing passwords, tokens, or secrets
+*password*
+*token*
+*secret*
+*credential*
+*key*
+
+# But allow example configurations
+!*example*
+!*.example
+!*example.*

@@ -1,0 +1,248 @@
+################################################################################
+# Confluence to Markdown Migration Tool - Configuration Example
+################################################################################
+#
+# Copy this file to 'config.yaml' and fill in your credentials and settings.
+# Environment variable substitution is supported using syntax: ${VARIABLE_NAME}
+# For sensitive values, use environment variables rather than hardcoding.
+#
+################################################################################
+
+# Confluence source connection settings
+confluence:
+  # Confluence Server/Cloud URL (required)
+  base_url: "https://confluence.example.com"
+  
+  # Authentication type: "basic" or "bearer" (default: "basic")
+  # - "basic": Username/password authentication
+  # - "bearer": API token authentication (for Confluence Cloud)
+  auth_type: "basic"
+  
+  # Basic authentication credentials (required if auth_type is "basic")
+  username: "your-confluence-username"
+  password: ${CONFLUENCE_PASSWORD}  # Use environment variable
+  
+  # API token for bearer authentication (required if auth_type is "bearer")
+  # api_token: ${CONFLUENCE_API_TOKEN}
+  
+  # SSL verification (default: true)
+  verify_ssl: true
+  
+  # Path to HTML export directory (required if migration.mode is "html")
+  # Comment out if using API mode
+  # html_export_path: "./confluence-export-html"
+
+
+# Wiki.js target settings (required if using Wiki.js export target)
+wikijs:
+  # Wiki.js instance URL
+  base_url: "https://wiki.example.com"
+  
+  # API key from Wiki.js admin panel (Administration > API)
+  # Generate at: ${WIKIJS_BASE_URL}/a/admin/api
+  api_key: ${WIKIJS_API_KEY}
+  
+  # SSL verification (default: true)
+  verify_ssl: true
+  
+  # Default locale for created pages (default: "en")
+  default_locale: "en"
+  
+  # Default editor type (default: "markdown")
+  default_editor: "markdown"
+  
+  # Conflict resolution strategy for existing pages
+  conflict_resolution: 'skip'  # Options: 'skip' (ignore conflicts), 'overwrite' (replace content), 'version' (append -2, -3 suffixes)
+  
+  # Preserve Confluence labels as Wiki.js tags
+  preserve_labels: true
+  
+  # Include space key in generated paths (default: true)
+  include_space_in_path: true  # true: /SPACE/parent/child (preserves isolation); false: /parent/child (flat structure)
+  
+  # Attachment upload settings
+  asset_upload:
+    enabled: true              # Enable/disable attachment uploads to Wiki.js assets
+    folder: '/confluence-assets'  # Target folder path in Wiki.js (must start with /)
+    max_workers: 3             # Number of parallel upload threads
+    rewrite_links: true        # Replace local attachment paths with asset URLs in markdown
+
+
+# BookStack target settings (required if using BookStack export target)
+bookstack:
+  # BookStack instance URL
+  base_url: "https://bookstack.example.com"
+  
+  # API token credentials (Settings > API Tokens)
+  # Generate API tokens in BookStack admin panel
+  token_id: ${BOOKSTACK_TOKEN_ID}
+  token_secret: ${BOOKSTACK_TOKEN_SECRET}
+  
+  # SSL verification (default: true)
+  verify_ssl: true
+
+
+# Migration execution settings
+migration:
+  # Fetch mode: "api" or "html" (default: "api")
+  # - "api": Fetch via Confluence REST API
+  # - "html": Parse from Confluence HTML export files
+  mode: "api"
+  
+  # Export target destination (default: "markdown_files")
+  # Options:
+  #   - "markdown_files": Export to local markdown files only
+  #   - "wikijs": Import directly to Wiki.js
+  #   - "bookstack": Import directly to BookStack
+  #   - "both_wikis": Import to both Wiki.js and BookStack
+  export_target: "markdown_files"
+  
+  # Optional: List of space keys to migrate (empty = all spaces)
+  spaces: []
+  # Example: spaces: ["DEV", "OPS", "DOC"]
+  
+  # Optional: Single page ID to migrate (useful for testing)
+  page_id: null
+  
+  # Optional: Filter pages modified after this date (ISO format)
+  since_date: null
+  # Example: since_date: "2023-01-01T00:00:00Z"
+  
+  # Perform dry run without making changes (default: false)
+  dry_run: false
+  
+  # Enable interactive TUI mode for space/page selection (default: false)
+  interactive: false
+  
+  # Number of pages to process in parallel (default: 5)
+  batch_size: 5
+  
+  # Store Confluence page IDs as tags/metadata (default: true)
+  preserve_page_ids: true
+
+
+# Export settings for markdown files mode
+export:
+  # Output directory for exported markdown files (default: "./confluence-export")
+  output_directory: "./confluence-export"
+  
+  # Markdown flavor for conversion (default: "gfm")
+  # Options:
+  #   - "commonmark": Standard CommonMark
+  #   - "gfm": GitHub Flavored Markdown
+  #   - "wikijs": Wiki.js compatible markdown
+  markdown_flavor: "gfm"
+  
+  # Generate README.md index files in directories (default: true)
+  create_index_files: true
+  
+  # Create subdirectories for each Confluence space (default: true)
+  organize_by_space: true
+  
+  # Attachment handling configuration
+  attachment_handling:
+    # Download attachments from Confluence (default: true)
+    download_attachments: true
+    
+    # Maximum attachment file size in bytes (default: 52428800 = 50MB)
+    max_file_size: 52428800
+    
+    # File extensions to skip (e.g., executables, archives)
+    skip_file_types:
+      - ".exe"
+      - ".dll"
+      - ".zip"
+      - ".tar"
+      - ".gz"
+      - ".rar"
+    
+    # Subdirectory name for attachments (default: "attachments")
+    attachment_directory: "attachments"
+    
+    # Enable tqdm progress bars for attachment downloads (default: true)
+    progress_bars: true
+
+
+# Content processing settings
+content_processing:
+  # Confluence macro conversion settings
+  macro_conversion:
+    # Enable macro to markdown conversion (default: true)
+    enabled: true
+    
+    # Use raw macro content as fallback if conversion fails (default: true)
+    fallback_to_raw: true
+    
+    # List of macro types to attempt conversion (default: common macros)
+    supported_macros:
+      - "info"
+      - "note"
+      - "tip"
+      - "warning"
+      - "code"
+      - "expand"
+      - "panel"
+      - "toc"
+      - "children"
+      - "anchor"
+      - "jira"
+  
+  # Link handling settings
+  link_handling:
+    # Resolve internal Confluence links to markdown links (default: true)
+    resolve_internal_links: true
+    
+    # Preserve anchor links within pages (default: true)
+    preserve_anchors: true
+    
+    # Convert @user mentions to text (default: false)
+    convert_user_mentions: false
+  
+  # Image handling settings
+  image_handling:
+    # Embed images in markdown with proper references (default: true)
+    embed_images: true
+    
+    # Preserve alt text from Confluence (default: true)
+    preserve_alt_text: true
+    
+    # Optional: Maximum image width in pixels (null = no limit)
+    max_image_width: null
+
+
+# Logging configuration
+logging:
+  # Log level: DEBUG, INFO, WARNING, ERROR, CRITICAL (default: "INFO")
+  # Note: CLI --verbose flags override this setting
+  level: "INFO"
+  
+  # Optional: Path to log file (default: null = no file logging)
+  file: null
+  # Example: file: "./migration.log"
+  
+  # Log message format (optional)
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+  
+  # Date format (optional)
+  date_format: "%Y-%m-%d %H:%M:%S"
+
+
+# Advanced settings (normally not required to change)
+advanced:
+  # HTTP request timeout in seconds (default: 30)
+  request_timeout: 30
+  
+  # Maximum retry attempts for failed requests (default: 3)
+  max_retries: 3
+  
+  # Exponential backoff factor for retries (default: 2)
+  retry_backoff_factor: 2
+  
+  # Minimum seconds between requests (default: 0.0)
+  rate_limit: 0.0
+  
+  # Enable caching of fetched content (default: false)
+  cache_enabled: false
+  
+  # Cache directory path (default: "./.cache")
+  cache_directory: "./.cache"

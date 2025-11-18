@@ -1,0 +1,39 @@
+# Confluence to Markdown Migration Tool - Python Dependencies
+# Install with: pip install -r requirements.txt
+
+# Core dependencies
+pyyaml>=6.0                      # YAML configuration file parsing
+requests>=2.31.0                 # HTTP client for API calls and downloads
+urllib3>=2.0.0                   # HTTP library with retry support and connection pooling
+python-dateutil>=2.8.0           # ISO 8601 date parsing for filter validation
+
+# Wiki.js GraphQL client (required for Wiki.js export)
+gql>=3.4.0                       # GraphQL query language and client
+requests-toolbelt>=1.0.0         # HTTP utilities for enhanced requests
+
+# HTML/Markdown processing
+beautifulsoup4>=4.12.0           # HTML parsing and traversal
+lxml>=4.9.0                      # Fast XML/HTML parser (required by BeautifulSoup)
+markdownify>=0.11.6              # HTML to Markdown conversion library
+markdown>=3.5.0                  # Markdown to HTML conversion (for BookStack compatibility)
+
+# Optional colored logging (enhances console output)
+colorlog>=6.7.0                  # Colored console logging with automatic fallback
+
+# Progress tracking and interactive UI
+tqdm>=4.66.0                     # Progress bars for long-running operations
+textual>=0.40.0                  # Terminal UI framework for interactive mode (required for --interactive flag)
+
+# Testing dependencies (optional, for development)
+pytest>=7.4.0                    # Python testing framework
+pytest-cov>=4.1.0                # Test coverage reporting
+responses>=0.23.0                # Mock HTTP responses for testing
+
+# Optional: Confluence REST API client (not required if using direct requests)
+# atlassian-python-api>=3.41.0  # Official Atlassian Python API wrapper
+
+# Optional: Additional utilities for enhanced functionality
+python-dotenv>=1.0.0             # Load environment variables from .env files
+
+# Note: If you encounter issues with graphql-core version conflicts,
+# you may need to pin: graphql-core<3.3,>=3.2
