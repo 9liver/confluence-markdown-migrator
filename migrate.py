@@ -541,8 +541,10 @@ def main() -> int:
         config = config_loader.merge_with_args(config, args)
         
         # Validate configuration
-        if not config_loader.validate(config):
-            logger.error("Configuration validation failed")
+        try:
+            config_loader.validate(config)
+        except ValueError as e:
+            logger.error(f"Configuration validation failed: {e}")
             return 2
         
         # Reconfigure logging with config file settings
