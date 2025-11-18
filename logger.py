@@ -188,10 +188,20 @@ class ProgressTracker:
         # Log progress every 10 items or on failure
         if self.processed_items % 10 == 0 or not success:
             remaining = self.total_items - self.processed_items
+            percent_complete = (self.processed_items / self.total_items * 100) if self.total_items > 0 else 0
+            
+            # Calculate ETA
+            eta_str = ""
+            if self.start_time and self.processed_items > 0:
+                elapsed = time.time() - self.start_time
+                avg_time_per_item = elapsed / self.processed_items
+                remaining_time = avg_time_per_item * remaining
+                eta_str = f" - ETA: {self._format_elapsed(remaining_time)}"
+            
             status = "Success" if success else "Failed"
             self.logger.info(
-                f"Processed {self.processed_items}/{self.total_items} {self.item_type} "
-                f"({remaining} remaining) - Last: {status}"
+                f"[{percent_complete:.1f}%] Processed {self.processed_items}/{self.total_items} {self.item_type} "
+                f"({remaining} remaining) - Last: {status}{eta_str}"
             )
     
     def get_stats(self) -> Dict[str, Any]:

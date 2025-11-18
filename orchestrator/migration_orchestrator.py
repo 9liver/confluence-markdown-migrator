@@ -22,7 +22,7 @@ from models import DocumentationTree, ConfluencePage
 from converters import convert_page
 from exporters import MarkdownExporter
 from importers import WikiJsImporter, BookStackImporter
-from logger import log_section
+from logger import log_section, ProgressTracker
 from orchestrator.migration_report import MigrationReport
 
 logger = logging.getLogger(__name__)
@@ -232,45 +232,52 @@ class MigrationOrchestrator:
         
         self.logger.info(f"Converting {len(all_pages)} pages to Markdown")
         
-        # Process pages with progress bar
-        if HAS_TQDM:
-            page_iterator = tqdm(all_pages, desc="Converting to Markdown")
-        else:
-            page_iterator = all_pages
-            self.logger.warning("tqdm not available, progress bar disabled")
-        
-        for page in page_iterator:
-            try:
-                # Convert the page
-                convert_page(page, self.config, self.logger)
-                
-                # Check conversion status
-                conversion_status = page.conversion_metadata.get('conversion_status', 'failed')
-                
-                if conversion_status == 'success':
-                    stats['pages_success'] += 1
-                elif conversion_status == 'failed':
+        # Process pages with progress tracker
+        with ProgressTracker(total_items=len(all_pages), item_type='pages') as tracker:
+            for page in all_pages:
+                success = True  # Assume success unless we hit an error
+                try:
+                    # Convert the page
+                    convert_page(page, self.config, self.logger)
+                    
+                    # Check conversion status
+                    conversion_status = page.conversion_metadata.get('conversion_status', 'failed')
+                    
+                    if conversion_status == 'success':
+                        stats['pages_success'] += 1
+                        stats['pages_processed'] += 1
+                    elif conversion_status == 'failed':
+                        stats['pages_failed'] += 1
+                        stats['pages_processed'] += 1
+                        success = False
+                        stats['errors'].append({
+                            'phase': 'content_conversion',
+                            'page_id': page.id,
+                            'page_title': page.title,
+                            'error': page.conversion_metadata.get('errors', ['Unknown error'])
+                        })
+                    elif conversion_status == 'partial':
+                        stats['pages_partial'] += 1
+                        stats['pages_processed'] += 1
+                    else:
+                        # Handle unexpected status
+                        stats['pages_failed'] += 1
+                        stats['pages_processed'] += 1
+                        success = False
+                        
+                    tracker.increment(success=success)
+                    
+                except Exception as e:
+                    self.logger.error(f"Failed to convert page '{page.title}' (ID: {page.id}): {str(e)}")
                     stats['pages_failed'] += 1
+                    stats['pages_processed'] += 1
+                    tracker.increment(success=False)
                     stats['errors'].append({
                         'phase': 'content_conversion',
                         'page_id': page.id,
                         'page_title': page.title,
-                        'error': page.conversion_metadata.get('errors', ['Unknown error'])
+                        'error': str(e)
                     })
-                elif conversion_status == 'partial':
-                    stats['pages_partial'] += 1
-                
-                stats['pages_processed'] += 1
-                
-            except Exception as e:
-                self.logger.error(f"Failed to convert page '{page.title}' (ID: {page.id}): {str(e)}")
-                stats['pages_failed'] += 1
-                stats['errors'].append({
-                    'phase': 'content_conversion',
-                    'page_id': page.id,
-                    'page_title': page.title,
-                    'error': str(e)
-                })
         
         self.logger.info(
             f"Phase 1 complete: {stats['pages_success']} success, "

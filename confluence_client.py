@@ -3,10 +3,12 @@
 import json
 import logging
 import time
+import warnings
 from typing import Any, Dict, List, Optional, Tuple, Union
 from urllib.parse import urljoin, urlparse
 
 import requests
+import urllib3
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
@@ -72,6 +74,8 @@ class ConfluenceClient:
         self.session.verify = verify_ssl
         if not verify_ssl:
             logger.warning("SSL verification disabled - this is insecure!")
+            # Suppress urllib3 warnings about unverified HTTPS requests
+            urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
         
         # Configure retry strategy for GET requests
         retry_strategy = Retry(
