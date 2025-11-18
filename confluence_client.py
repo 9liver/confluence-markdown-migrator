@@ -260,16 +260,22 @@ class ConfluenceClient:
     
     def get_space_content(self, space_key: str, limit: int = 100) -> List[Dict[str, Any]]:
         """
-        Get top-level pages in a space.
+        Get top-level pages in a space with full content.
+        
+        This method first fetches a list of page IDs, then fetches each page individually
+        to ensure full body content is retrieved.
         
         Args:
             space_key: Confluence space key
             limit: Number of pages per page
             
         Returns:
-            List of page dictionaries
+            List of page dictionaries with full content
         """
-        pages = []
+        logger.info(f"Fetching pages with full content for space '{space_key}'")
+        
+        # Step 1: Get page list (IDs only)
+        page_list = []
         start = 0
         last_log_time = time.time()
         
@@ -283,12 +289,12 @@ class ConfluenceClient:
             response = self._make_request('GET', '/rest/api/content', params=params)
             data = response.json()
             
-            pages.extend(data['results'])
+            page_list.extend(data['results'])
             
-            # Log progress every 500 pages or every 10 seconds
+            # Log progress
             current_time = time.time()
-            if len(pages) % 500 == 0 or (current_time - last_log_time) > 10:
-                logger.info(f"Fetching pages from space '{space_key}': {len(pages)} pages retrieved so far...")
+            if len(page_list) % 500 == 0 or (current_time - last_log_time) > 10:
+                logger.info(f"Discovered {len(page_list)} pages so far in space '{space_key}'...")
                 last_log_time = current_time
             
             if 'next' not in data.get('_links', {}):
@@ -296,8 +302,27 @@ class ConfluenceClient:
             
             start += limit
         
-        logger.info(f"Fetched {len(pages)} top-level pages from space '{space_key}'")
-        return pages
+        logger.info(f"Found {len(page_list)} pages in space '{space_key}' - fetching full content")
+        
+        # Step 2: Fetch each page individually with full expansions
+        pages_with_content = []
+        for idx, page_info in enumerate(page_list):
+            page_id = page_info['id']
+            try:
+                # Fetch full page content with expansions
+                expand_fields = ['body.export_view', 'body.view', 'ancestors', 'space', 'version', 'metadata.labels', 'history']
+                full_page = self.get_page(page_id, expand=expand_fields)
+                pages_with_content.append(full_page)
+                
+                # Log progress every 50 pages
+                if (idx + 1) % 50 == 0:
+                    logger.info(f"Retrieved full content for {idx + 1}/{len(page_list)} pages")
+                    
+            except Exception as e:
+                logger.warning(f"Failed to fetch page {page_id}: {str(e)} - skipping")
+        
+        logger.info(f"Successfully fetched {len(pages_with_content)} pages with full content")
+        return pages_with_content
     
     def get_page(
         self,

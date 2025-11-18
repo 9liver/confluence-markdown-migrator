@@ -203,6 +203,15 @@ class ApiFetcher(BaseFetcher):
             else:
                 logger.info(f"Cache miss - fetching from API")
                 all_pages_api = self.client.get_space_content(space_key)
+                
+                # Verify content is present in first few pages
+                if all_pages_api and len(all_pages_api) > 0:
+                    sample_page = all_pages_api[0]
+                    has_body = 'body' in sample_page
+                    has_export_view = has_body and 'export_view' in sample_page.get('body', {})
+                    has_view = has_body and 'view' in sample_page.get('body', {})
+                    logger.debug(f"Sample page {sample_page.get('id')}: has_body={has_body}, has_export_view={has_export_view}, has_view={has_view}")
+                
                 # Cache the API response
                 self.cache_manager.set(cache_key, all_pages_api)
             
@@ -270,17 +279,11 @@ class ApiFetcher(BaseFetcher):
         logger.debug(f"Cache miss - fetching page content for {page_id} from API")
         
         # CRITICAL: Use body.export_view for highest fidelity HTML (not body.storage)
-        expand_fields = [
-            'body.export_view',  # Rendered HTML with macros expanded
-            'ancestors',
-            'space',
-            'version',
-            'metadata.labels',
-            'history'
-        ]
+        expand_fields = 'body.export_view,body.view,ancestors,space,version,metadata.labels,history'
         
         try:
             api_response = self.client.get_page(page_id, expand=expand_fields)
+            logger.debug(f"API response for page {page_id}: {type(api_response)}")
         except Exception as e:
             logger.error(f"Failed to fetch page {page_id}: {str(e)}")
             raise
@@ -399,14 +402,7 @@ class ApiFetcher(BaseFetcher):
         self._log_fetch_progress(page_id, depth)
         
         # Fetch page with expansions
-        expand_fields = [
-            'body.export_view',
-            'ancestors',
-            'space',
-            'version',
-            'metadata.labels',
-            'history'
-        ]
+        expand_fields = 'body.export_view,body.view,ancestors,space,version,metadata.labels,history'
         
         try:
             api_response = self.client.get_page(page_id, expand=expand_fields)
@@ -675,7 +671,7 @@ class ApiFetcher(BaseFetcher):
         
         logger.info(f"Searching for pages with CQL: {cql}")
         
-        expand_fields = ['body.export_view', 'ancestors', 'space', 'version', 'metadata.labels', 'history']
+        expand_fields = 'body.export_view,body.view,ancestors,space,version,metadata.labels,history'
         
         try:
             search_results = self.client.search_content(cql, expand=expand_fields)
