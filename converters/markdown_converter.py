@@ -115,8 +115,8 @@ class MarkdownConverter(MarkdownifyConverter):
             self._update_failed_conversion_metadata(page, str(e))
             return False
     
-    def convert_html(self, html_content: str, format_type: str = 'export') -> str:
-        """Convert raw HTML string to markdown."""
+    def convert_standalone_html(self, html_content: str, format_type: str = 'export') -> str:
+        """Convert standalone HTML string to markdown (not part of markdownify pipeline)."""
         self.logger.debug("Converting HTML to markdown")
         
         soup = self._parse_html(html_content)
@@ -407,11 +407,9 @@ class MarkdownConverter(MarkdownifyConverter):
         return code_block_pattern.sub(preserve_block, markdown)
     
     # Custom markdownify converters
-    def convert_table(self, el, text, convert_as_inline, **kwargs):
+    def convert_table(self, el, text, parent_tags=None, **kwargs):
         """Custom table converter to ensure proper markdown table syntax."""
         from bs4 import BeautifulSoup
-        if convert_as_inline:
-            return text
         
         rows = el.find_all('tr')
         if not rows:
@@ -443,28 +441,25 @@ class MarkdownConverter(MarkdownifyConverter):
         result = '\\n'.join(markdown_rows) + '\\n\\n'
         return result
     
-    def convert_blockquote(self, el, text, convert_as_inline, **kwargs):
+    def convert_blockquote(self, el, text, parent_tags=None, **kwargs):
         """Handle blockquotes, check for callout classes."""
-        if convert_as_inline:
-            return text
-        
         # Check for callout classes
         classes = el.get('class', [])
         for cls in classes:
             if cls.startswith('is-'):
                 callout_type = cls.replace('is-', '')
-                return f'> {{.{cls}}}\\n' + super().convert_blockquote(el, text, convert_as_inline, **kwargs)
+                return f'> {{.{cls}}}\\n' + super().convert_blockquote(el, text, parent_tags, **kwargs)
         
-        return super().convert_blockquote(el, text, convert_as_inline, **kwargs)
+        return super().convert_blockquote(el, text, parent_tags, **kwargs)
     
-    def convert_code(self, el, text, convert_as_inline, **kwargs):
+    def convert_code(self, el, text, parent_tags=None, **kwargs):
         """Handle inline code and code blocks."""
         language = self._extract_code_language(el)
-        if language and not convert_as_inline:
+        if language:
             return f"```{language}\\n{text.strip()}\\n```\\n\\n"
         return f"`{text}`"
     
-    def convert_img(self, el, text, convert_as_inline, parent_tags=None, **kwargs):
+    def convert_img(self, el, text, parent_tags=None, **kwargs):
         """Handle images."""
         src = el.get('src', '')
         alt = el.get('alt', '')
