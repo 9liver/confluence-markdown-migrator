@@ -532,3 +532,29 @@ class ConfluenceClient:
         
         logger.info(f"CQL search returned {len(results)} results for query: {cql}")
         return results
+    @classmethod
+    def from_config(cls, config: Dict[str, Any]) -> 'ConfluenceClient':
+        """
+        Initialize Confluence client from configuration dictionary.
+        
+        Args:
+            config: Configuration dictionary with confluence and advanced settings
+            
+        Returns:
+            ConfluenceClient instance
+        """
+        confluence_config = config.get('confluence', {})
+        advanced_config = config.get('advanced', {})
+        
+        return cls(
+            base_url=confluence_config.get('base_url'),
+            auth_type=confluence_config.get('auth_type', 'basic'),
+            username=confluence_config.get('username'),
+            password=confluence_config.get('password'),
+            api_token=confluence_config.get('api_token'),
+            verify_ssl=confluence_config.get('verify_ssl', True),
+            timeout=advanced_config.get('request_timeout', 30),
+            max_retries=advanced_config.get('max_retries', 3),
+            retry_backoff_factor=advanced_config.get('retry_backoff_factor', 2.0),
+            rate_limit=advanced_config.get('rate_limit', 0.0)
+        )
