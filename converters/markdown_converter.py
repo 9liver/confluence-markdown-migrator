@@ -407,37 +407,59 @@ class MarkdownConverter(MarkdownifyConverter):
         return code_block_pattern.sub(preserve_block, markdown)
     
     # Custom markdownify converters
+    def _get_cell_text(self, cell):
+        """Extract text from a table cell, preserving line breaks as <br>."""
+        from bs4 import NavigableString
+
+        # Build text by iterating through cell contents
+        parts = []
+        for element in cell.descendants:
+            if isinstance(element, NavigableString):
+                text = str(element).strip()
+                if text:
+                    parts.append(text)
+            elif element.name == 'br':
+                parts.append('<br>')
+
+        # Join parts and normalize whitespace around <br> tags
+        text = ' '.join(parts)
+        # Clean up spaces around <br> tags
+        text = re.sub(r'\s*<br>\s*', '<br>', text)
+        # Escape pipe characters that would break table formatting
+        text = text.replace('|', '\\|')
+        return text.strip()
+
     def convert_table(self, el, text, parent_tags=None, **kwargs):
         """Custom table converter to ensure proper markdown table syntax."""
         from bs4 import BeautifulSoup
-        
+
         rows = el.find_all('tr')
         if not rows:
             return ''
-        
+
         # Extract header if present
         header_cells = rows[0].find_all(['th', 'td'])
         if not header_cells:
             return ''
-        
+
         # Build table
         markdown_rows = []
-        
+
         # Header row
-        header_row = '| ' + ' | '.join(cell.get_text(strip=True) for cell in header_cells) + ' |'
+        header_row = '| ' + ' | '.join(self._get_cell_text(cell) for cell in header_cells) + ' |'
         markdown_rows.append(header_row)
-        
+
         # Separator row
         separator = '| ' + ' | '.join('---' for _ in header_cells) + ' |'
         markdown_rows.append(separator)
-        
+
         # Data rows
         for row in rows[1:]:
-            cells = row.find_all('td')
+            cells = row.find_all(['td', 'th'])
             if cells:
-                data_row = '| ' + ' | '.join(cell.get_text(strip=True) for cell in cells) + ' |'
+                data_row = '| ' + ' | '.join(self._get_cell_text(cell) for cell in cells) + ' |'
                 markdown_rows.append(data_row)
-        
+
         result = '\n'.join(markdown_rows) + '\n\n'
         return result
     
