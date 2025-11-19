@@ -314,7 +314,7 @@ class WikiJsClient:
             Page dictionary or None if not found
         """
         query = gql("""
-            query GetPageByPath($path: String!, $locale: String) {
+            query GetPageByPath($path: String!, $locale: String!) {
                 pages {
                     singleByPath(path: $path, locale: $locale) {
                         id
@@ -403,7 +403,7 @@ class WikiJsClient:
         mutation = gql("""
             mutation CreatePage($content: String!, $description: String!, $editor: String!, $isPublished: Boolean!,
                                $isPrivate: Boolean!, $locale: String!, $path: String!,
-                               $publishEndDate: Date, $publishStartDate: Date, $tags: [String], $title: String!) {
+                               $publishEndDate: Date, $publishStartDate: Date, $tags: [String]!, $title: String!) {
                 pages {
                     create(content: $content, description: $description, editor: $editor, isPublished: $isPublished,
                           isPrivate: $isPrivate, locale: $locale, path: $path,
