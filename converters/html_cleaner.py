@@ -169,8 +169,9 @@ class HtmlCleaner:
     def _remove_empty_elements(self, soup: BeautifulSoup) -> None:
         """Remove empty elements that serve no purpose."""
         removed_count = 0
-        
-        for element in soup.find_all(['div', 'span', 'p', 'br']):
+
+        # Note: br tags are self-closing and should not be removed
+        for element in soup.find_all(['div', 'span', 'p']):
             # Skip elements with children
             if element.find():
                 continue
