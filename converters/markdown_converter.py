@@ -443,9 +443,46 @@ class MarkdownConverter(MarkdownifyConverter):
                     # Multi-line - join with <br> for table cell
                     return '`' + '`<br>`'.join(code_lines) + '`'
 
-            # Handle <code> tags
+            # Handle <code> tags - preserve <br> tags inside
             if element.name == 'code':
-                return f'`{element.get_text().strip()}`'
+                code_parts = []
+                for child in element.children:
+                    if isinstance(child, NavigableString):
+                        text = str(child).strip()
+                        if text:
+                            code_parts.append(text)
+                    elif isinstance(child, Tag) and child.name == 'br':
+                        code_parts.append('<br>')
+                    elif isinstance(child, Tag):
+                        # Get text from nested elements
+                        text = child.get_text().strip()
+                        if text:
+                            code_parts.append(text)
+
+                # Join parts, handling <br> markers
+                if not code_parts:
+                    return ''
+
+                # Process the parts to create proper inline code with line breaks
+                result_parts = []
+                current_text = []
+
+                for part in code_parts:
+                    if part == '<br>':
+                        if current_text:
+                            result_parts.append(''.join(current_text))
+                            current_text = []
+                    else:
+                        current_text.append(part)
+
+                if current_text:
+                    result_parts.append(''.join(current_text))
+
+                if len(result_parts) == 1:
+                    return f'`{result_parts[0]}`'
+                else:
+                    # Multi-line code in table cell - use <br> between code segments
+                    return '`' + '`<br>`'.join(result_parts) + '`'
 
             # Handle <br> tags
             if element.name == 'br':
