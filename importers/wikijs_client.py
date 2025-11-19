@@ -354,8 +354,9 @@ class WikiJsClient:
             page = result['pages']['singleByPath']
             return page if page else None
         except TransportQueryError as e:
-            # singleByPath returns null for not found, not an error
-            if "not found" in str(e).lower():
+            # singleByPath returns an error for not found pages
+            error_str = str(e).lower()
+            if "not found" in error_str or "does not exist" in error_str:
                 return None
             self._handle_graphql_error(e)
         except (TransportServerError, TransportProtocolError) as e:
@@ -429,7 +430,6 @@ class WikiJsClient:
                             tags {
                                 tag
                             }
-                            editor
                             createdAt
                             updatedAt
                             authorId
