@@ -408,26 +408,131 @@ class MarkdownConverter(MarkdownifyConverter):
     
     # Custom markdownify converters
     def _get_cell_text(self, cell):
-        """Extract text from a table cell, preserving line breaks as <br>."""
-        from bs4 import NavigableString
+        """Extract text from a table cell, preserving line breaks and formatting code blocks."""
+        from bs4 import NavigableString, Tag
 
-        # Build text by iterating through cell contents
+        # Check for cell highlighting (Confluence colored cells)
+        highlight_color = cell.get('data-highlight-colour', '')
+        cell_classes = cell.get('class', [])
+
+        # Build text by processing cell contents
         parts = []
-        for element in cell.descendants:
-            if isinstance(element, NavigableString):
-                text = str(element).strip()
-                if text:
-                    parts.append(text)
-            elif element.name == 'br':
-                parts.append('<br>')
 
-        # Join parts and normalize whitespace around <br> tags
+        def process_element(element):
+            """Recursively process element and its children."""
+            if isinstance(element, NavigableString):
+                text = str(element)
+                # Preserve meaningful whitespace but normalize excessive spaces
+                text = re.sub(r'[ \t]+', ' ', text)
+                if text.strip():
+                    return text.strip()
+                return ''
+
+            if not isinstance(element, Tag):
+                return ''
+
+            # Handle <pre> tags - convert to inline code
+            if element.name == 'pre':
+                code_text = element.get_text()
+                # Remove excessive whitespace but preserve structure
+                code_lines = [line.strip() for line in code_text.split('\n') if line.strip()]
+                if len(code_lines) == 1:
+                    # Single line - use inline code
+                    return f'`{code_lines[0]}`'
+                else:
+                    # Multi-line - join with <br> for table cell
+                    return '`' + '`<br>`'.join(code_lines) + '`'
+
+            # Handle <code> tags
+            if element.name == 'code':
+                return f'`{element.get_text().strip()}`'
+
+            # Handle <br> tags
+            if element.name == 'br':
+                return '<br>'
+
+            # Handle links
+            if element.name == 'a':
+                href = element.get('href', '')
+                link_text = element.get_text().strip()
+                if href:
+                    # Truncate very long URLs for table readability
+                    if len(href) > 60:
+                        return f'[{link_text or "link"}]({href[:57]}...)'
+                    return f'[{link_text or href}]({href})'
+                return link_text
+
+            # Handle <p> tags - add line break after
+            if element.name == 'p':
+                inner_parts = []
+                for child in element.children:
+                    result = process_element(child)
+                    if result:
+                        inner_parts.append(result)
+                text = ' '.join(inner_parts)
+                return text + '<br>' if text else ''
+
+            # Handle lists inside cells
+            if element.name in ['ul', 'ol']:
+                list_items = []
+                for li in element.find_all('li', recursive=False):
+                    item_text = li.get_text().strip()
+                    if item_text:
+                        list_items.append(f'• {item_text}')
+                return '<br>'.join(list_items)
+
+            # Handle other elements - just get text from children
+            if element.name in ['span', 'strong', 'em', 'b', 'i', 'div']:
+                inner_parts = []
+                for child in element.children:
+                    result = process_element(child)
+                    if result:
+                        inner_parts.append(result)
+                text = ' '.join(inner_parts)
+
+                # Apply formatting
+                if element.name in ['strong', 'b']:
+                    return f'**{text}**' if text else ''
+                if element.name in ['em', 'i']:
+                    return f'*{text}*' if text else ''
+                return text
+
+            return ''
+
+        # Process all direct children
+        for child in cell.children:
+            result = process_element(child)
+            if result:
+                parts.append(result)
+
+        # Join parts
         text = ' '.join(parts)
-        # Clean up spaces around <br> tags
+
+        # Clean up multiple spaces and normalize <br> tags
+        text = re.sub(r'\s+', ' ', text)
         text = re.sub(r'\s*<br>\s*', '<br>', text)
+        text = re.sub(r'(<br>)+', '<br>', text)  # Collapse multiple <br>
+        text = text.strip()
+        text = text.strip('<br>')  # Remove leading/trailing <br>
+
         # Escape pipe characters that would break table formatting
         text = text.replace('|', '\\|')
-        return text.strip()
+
+        # Add indicator for highlighted cells (e.g., green = done)
+        if highlight_color == 'green' or 'highlight-green' in ' '.join(cell_classes):
+            # If cell just says "DONE", make it bold
+            if text.upper().strip() == 'DONE':
+                text = '**DONE** ✓'
+            elif not text:
+                text = '✓'
+        elif highlight_color == 'red' or 'highlight-red' in ' '.join(cell_classes):
+            if not text:
+                text = '✗'
+        elif highlight_color == 'yellow' or 'highlight-yellow' in ' '.join(cell_classes):
+            if not text:
+                text = '⚠'
+
+        return text
 
     def convert_table(self, el, text, parent_tags=None, **kwargs):
         """Custom table converter to ensure proper markdown table syntax."""
