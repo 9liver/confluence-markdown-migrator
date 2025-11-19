@@ -633,68 +633,67 @@ class MarkdownConverter(MarkdownifyConverter):
         return result
     
     def convert_ol(self, el, text, parent_tags=None, **kwargs):
-        """Handle ordered lists, tracking nesting for letter conversion."""
-        # Check if this ol is nested inside another ol
-        parent = el.parent
-        is_nested = False
-        while parent:
-            if parent.name == 'ol':
-                is_nested = True
-                break
-            if parent.name == 'li':
-                parent = parent.parent
-            else:
-                break
+        """Handle ordered lists."""
+        # Ensure proper spacing before and after lists
+        return '\n' + text + '\n'
 
-        if is_nested:
-            # Mark this as a nested ol for convert_li to handle
-            el['data-nested-ol'] = 'true'
-
-        return text + '\n'
+    def convert_ul(self, el, text, parent_tags=None, **kwargs):
+        """Handle unordered lists."""
+        # Ensure proper spacing before and after lists
+        return '\n' + text + '\n'
 
     def convert_li(self, el, text, parent_tags=None, **kwargs):
-        """Handle list items with proper nesting and letter numbering."""
+        """Handle list items with proper nesting."""
         parent = el.parent
         if not parent:
             return text
 
-        # Determine nesting level
+        # Determine nesting level by counting parent list elements
         depth = 0
-        ancestor = parent
+        ancestor = el.parent
         while ancestor:
             if ancestor.name in ['ol', 'ul']:
                 depth += 1
             ancestor = ancestor.parent
-        depth = max(0, depth - 1)  # Adjust for 0-based indentation
+        depth = max(0, depth - 1)  # Subtract 1 because we start from immediate parent
 
-        # Get item index
+        # Get item index within this list
         siblings = [child for child in parent.children if hasattr(child, 'name') and child.name == 'li']
         try:
             index = siblings.index(el)
         except ValueError:
             index = 0
 
-        # Determine bullet/number style
+        # Use 3 spaces per indentation level (standard for nested lists)
         indent = '   ' * depth
 
+        # Determine bullet/number style
         if parent.name == 'ol':
-            # Check if this is a nested ordered list
-            is_nested_ol = parent.get('data-nested-ol') == 'true'
-            if is_nested_ol:
-                # Use letters for nested ordered lists: a), b), c), etc.
-                letter = chr(ord('a') + (index % 26))
-                bullet = f'- {letter})'
-            else:
-                # Use numbers for top-level ordered lists
-                bullet = f'{index + 1}.'
+            bullet = f'{index + 1}.'
         else:
-            # Unordered list
             bullet = '-'
 
-        # Clean up text
+        # Clean up text - preserve internal newlines for nested content
         text = text.strip()
 
-        return f'{indent}{bullet} {text}\n'
+        # Handle nested lists - they should appear on new lines with proper indentation
+        # Check if this li contains nested lists
+        has_nested_list = el.find(['ol', 'ul'])
+        if has_nested_list:
+            # For items with nested lists, ensure the nested content is properly indented
+            lines = text.split('\n')
+            result_lines = []
+            first_line = True
+            for line in lines:
+                if first_line:
+                    result_lines.append(f'{indent}{bullet} {line}')
+                    first_line = False
+                else:
+                    # Nested content already has its own indentation from recursive conversion
+                    result_lines.append(line)
+            return '\n'.join(result_lines) + '\n'
+        else:
+            return f'{indent}{bullet} {text}\n'
 
     def convert_blockquote(self, el, text, parent_tags=None, **kwargs):
         """Handle blockquotes, check for callout classes."""
@@ -707,16 +706,49 @@ class MarkdownConverter(MarkdownifyConverter):
 
         return super().convert_blockquote(el, text, parent_tags, **kwargs)
 
+    def convert_span(self, el, text, parent_tags=None, **kwargs):
+        """Handle span elements, including Confluence anchors."""
+        classes = el.get('class', [])
+
+        # Check for Confluence anchor links
+        if 'confluence-anchor-link' in classes:
+            anchor_id = el.get('id', '')
+            if anchor_id:
+                # Return an HTML anchor that works in markdown
+                return f'<a id="{anchor_id}"></a>'
+            return ''
+
+        # For other spans, just return the text content
+        return text
+
+    def convert_pre(self, el, text, parent_tags=None, **kwargs):
+        """Handle pre elements, especially for code blocks."""
+        # Check for syntaxhighlighter params
+        params = el.get('data-syntaxhighlighter-params', '')
+        if params:
+            language = self._parse_syntaxhighlighter_language(params)
+            if language:
+                return f"```{language}\n{text.strip()}\n```\n\n"
+
+        # Check for code child element
+        code_el = el.find('code')
+        if code_el:
+            language = self._extract_code_language(code_el)
+            code_text = code_el.get_text()
+            if language and language != 'text':
+                return f"```{language}\n{code_text.strip()}\n```\n\n"
+            return f"```\n{code_text.strip()}\n```\n\n"
+
+        # Plain pre without code element
+        return f"```\n{text.strip()}\n```\n\n"
+
     def convert_code(self, el, text, parent_tags=None, **kwargs):
         """Handle inline code and code blocks."""
         # Check if this is a code block (inside pre) or inline code
         parent = el.parent
         if parent and parent.name == 'pre':
-            # This is a code block - extract language
-            language = self._extract_code_language(el)
-            if language:
-                return f"```{language}\n{text.strip()}\n```\n\n"
-            return f"```\n{text.strip()}\n```\n\n"
+            # This will be handled by convert_pre, just return the text
+            return text
 
         # Inline code - just wrap in backticks
         return f"`{text}`"
@@ -742,12 +774,28 @@ class MarkdownConverter(MarkdownifyConverter):
                 return str(cls).replace('language-', '')
             if str(cls).startswith('lang-'):
                 return str(cls).replace('lang-', '')
-        
+
         # Check data-language attribute
         lang = element.get('data-language')
         if lang:
             return lang
-        
+
+        # Check parent pre element for syntaxhighlighter params
+        parent = element.parent
+        if parent and parent.name == 'pre':
+            params = parent.get('data-syntaxhighlighter-params', '')
+            if params:
+                lang = self._parse_syntaxhighlighter_language(params)
+                if lang:
+                    return lang
+
+        # Check element itself for syntaxhighlighter params
+        params = element.get('data-syntaxhighlighter-params', '')
+        if params:
+            lang = self._parse_syntaxhighlighter_language(params)
+            if lang:
+                return lang
+
         # Common language class patterns
         language_map = {
             'python': 'python',
@@ -763,9 +811,38 @@ class MarkdownConverter(MarkdownifyConverter):
             'html': 'html',
             'css': 'css'
         }
-        
+
         for cls in classes:
             if str(cls) in language_map:
                 return language_map[str(cls)]
-        
+
         return 'text'  # Default fallback
+
+    def _parse_syntaxhighlighter_language(self, params: str) -> str:
+        """Parse language from syntaxhighlighter params string."""
+        for param in params.split(';'):
+            param = param.strip()
+            if param.startswith('brush:'):
+                language = param.replace('brush:', '').strip()
+                # Map common Confluence language names
+                language_map = {
+                    'bash': 'bash',
+                    'shell': 'bash',
+                    'sh': 'bash',
+                    'python': 'python',
+                    'py': 'python',
+                    'javascript': 'javascript',
+                    'js': 'javascript',
+                    'java': 'java',
+                    'sql': 'sql',
+                    'xml': 'xml',
+                    'html': 'html',
+                    'css': 'css',
+                    'json': 'json',
+                    'yaml': 'yaml',
+                    'yml': 'yaml',
+                    'text': 'text',
+                    'plain': 'text',
+                }
+                return language_map.get(language.lower(), language)
+        return ''

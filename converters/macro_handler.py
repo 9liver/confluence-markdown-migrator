@@ -78,7 +78,7 @@ class MacroHandler:
     def _find_macros(self, soup: BeautifulSoup, format_type: str) -> List[Tuple[Tag, str]]:
         """Find all macro elements in the HTML."""
         macros = []
-        
+
         if format_type == 'storage':
             # Find ac:structured-macro elements
             for element in soup.find_all('ac:structured-macro'):
@@ -91,7 +91,36 @@ class MacroHandler:
                 macro_name = element.get('data-macro-name')
                 if macro_name:
                     macros.append((element, macro_name))
-        
+
+            # Also find confluence-information-macro elements (info, warning, note, tip boxes)
+            for element in soup.find_all(class_=lambda x: x and 'confluence-information-macro' in x):
+                # Determine macro type from class
+                classes = element.get('class', [])
+                macro_name = 'info'  # default
+                for cls in classes:
+                    if 'confluence-information-macro-warning' in cls:
+                        macro_name = 'warning'
+                        break
+                    elif 'confluence-information-macro-note' in cls:
+                        macro_name = 'note'
+                        break
+                    elif 'confluence-information-macro-tip' in cls:
+                        macro_name = 'tip'
+                        break
+                    elif 'confluence-information-macro-information' in cls:
+                        macro_name = 'info'
+                        break
+
+                # Only add if not already found via data-macro-name
+                if not element.get('data-macro-name'):
+                    macros.append((element, macro_name))
+
+            # Also find code panel divs that might not have data-macro-name
+            for element in soup.find_all('div', class_=lambda x: x and 'code' in x and 'panel' in x):
+                # Check if already processed
+                if not element.get('data-macro-name') and element not in [m[0] for m in macros]:
+                    macros.append((element, 'code'))
+
         return macros
     
     def _get_macro_name(self, element: Tag, format_type: str) -> Optional[str]:
@@ -103,57 +132,90 @@ class MacroHandler:
     
     def _convert_info_macro(self, element: Tag, format_type: str) -> None:
         """Convert info macro to blockquote with info callout class."""
-        title = self._extract_parameter(element, 'title', format_type) or 'Note'
+        # Try multiple ways to extract title
+        title = self._extract_parameter(element, 'title', format_type)
+        if not title:
+            title = self._extract_title_from_info_macro(element)
+        # Don't use default title if none found - let the content speak for itself
         body = self._extract_body(element, format_type, plain_text=False)
-        
+
         # Create blockquote structure
         self._create_blockquote(element, callout_type='info', title=title, body=body)
     
     def _convert_warning_macro(self, element: Tag, format_type: str) -> None:
         """Convert warning macro to blockquote with warning callout class."""
-        title = self._extract_parameter(element, 'title', format_type) or 'Warning'
+        title = self._extract_parameter(element, 'title', format_type)
+        if not title:
+            title = self._extract_title_from_info_macro(element)
         body = self._extract_body(element, format_type, plain_text=False)
-        
+
         # Create blockquote structure
         self._create_blockquote(element, callout_type='warning', title=title, body=body)
-    
+
     def _convert_note_macro(self, element: Tag, format_type: str) -> None:
         """Convert note macro to blockquote (maps to warning)."""
-        title = self._extract_parameter(element, 'title', format_type) or 'Note'
+        title = self._extract_parameter(element, 'title', format_type)
+        if not title:
+            title = self._extract_title_from_info_macro(element)
         body = self._extract_body(element, format_type, plain_text=False)
-        
+
         # Note maps to warning in Wiki.js
         self._create_blockquote(element, callout_type='warning', title=title, body=body)
-    
+
     def _convert_tip_macro(self, element: Tag, format_type: str) -> None:
         """Convert tip macro to blockquote with success callout class."""
-        title = self._extract_parameter(element, 'title', format_type) or 'Tip'
+        title = self._extract_parameter(element, 'title', format_type)
+        if not title:
+            title = self._extract_title_from_info_macro(element)
         body = self._extract_body(element, format_type, plain_text=False)
-        
+
         self._create_blockquote(element, callout_type='success', title=title, body=body)
     
     def _convert_code_macro(self, element: Tag, format_type: str) -> None:
         """Convert code macro to pre > code block with language detection."""
-        language = self._extract_parameter(element, 'language', format_type) or 'text'
+        language = self._extract_parameter(element, 'language', format_type)
+
+        # Try to extract language from syntaxhighlighter params
+        if not language:
+            language = self._extract_language_from_syntaxhighlighter(element)
+
+        language = language or 'text'
         collapse = self._extract_parameter(element, 'collapse', format_type) or 'false'
         theme = self._extract_parameter(element, 'theme', format_type)
-        
-        code = self._extract_body(element, format_type, plain_text=True)
-        
+
+        # Extract title from parameter or codeHeader div
+        title = self._extract_parameter(element, 'title', format_type)
+        if not title:
+            # Check for codeHeader div (Confluence export format)
+            code_header = element.find(class_='codeHeader')
+            if not code_header:
+                code_header = element.find(class_='panelHeader')
+            if code_header:
+                title = code_header.get_text(strip=True)
+
+        # Extract code content
+        code = ''
+        # First check for pre element with syntaxhighlighter
+        pre_elem = element.find('pre', class_='syntaxhighlighter-pre')
+        if pre_elem:
+            code = pre_elem.get_text()
+        else:
+            # Fallback to body extraction
+            code = self._extract_body(element, format_type, plain_text=True)
+
         # Create pre > code block
         new_soup = BeautifulSoup('', 'lxml')
         pre = new_soup.new_tag('pre')
         code_tag = new_soup.new_tag('code')
-        
+
         # Add language class
         if language and language != 'text':
             code_tag['class'] = f'language-{language}'
-        
+
         code_tag.string = code or ''
         pre.append(code_tag)
-        
+
         # Add title if available
-        title = self._extract_parameter(element, 'title', format_type)
         if title:
             title_p = new_soup.new_tag('p')
             title_strong = new_soup.new_tag('strong')
@@ -269,10 +331,66 @@ class MacroHandler:
             body = element.get('data-macro-body')
             if body:
                 return body
+
+            # Check for confluence-information-macro-body class
+            body_div = element.find(class_='confluence-information-macro-body')
+            if body_div:
+                return body_div.decode_contents(formatter="html") or ''
+
             # Return inner HTML if no specific body format
             return element.decode_contents(formatter="html") or ''
-        
+
         return ''
+
+    def _extract_title_from_info_macro(self, element: Tag) -> Optional[str]:
+        """Extract title from info macro element (from p.title class)."""
+        title_elem = element.find('p', class_='title')
+        if title_elem:
+            return title_elem.get_text(strip=True)
+        return None
+
+    def _extract_language_from_syntaxhighlighter(self, element: Tag) -> Optional[str]:
+        """Extract language from Confluence syntaxhighlighter params.
+
+        Confluence uses data-syntaxhighlighter-params="brush: bash; gutter: false; theme: RDark"
+        """
+        # Check element itself
+        params = element.get('data-syntaxhighlighter-params', '')
+        if not params:
+            # Check pre elements inside
+            pre = element.find('pre')
+            if pre:
+                params = pre.get('data-syntaxhighlighter-params', '')
+
+        if params:
+            # Parse "brush: bash; gutter: false" format
+            for param in params.split(';'):
+                param = param.strip()
+                if param.startswith('brush:'):
+                    language = param.replace('brush:', '').strip()
+                    # Map common Confluence language names
+                    language_map = {
+                        'bash': 'bash',
+                        'shell': 'bash',
+                        'sh': 'bash',
+                        'python': 'python',
+                        'py': 'python',
+                        'javascript': 'javascript',
+                        'js': 'javascript',
+                        'java': 'java',
+                        'sql': 'sql',
+                        'xml': 'xml',
+                        'html': 'html',
+                        'css': 'css',
+                        'json': 'json',
+                        'yaml': 'yaml',
+                        'yml': 'yaml',
+                        'text': 'text',
+                        'plain': 'text',
+                    }
+                    return language_map.get(language.lower(), language)
+
+        return None
     
     def _create_blockquote(self, element: Tag, callout_type: str, title: str, body: str) -> None:
         """Create blockquote structure for macro conversion."""
