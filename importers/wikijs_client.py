@@ -342,9 +342,10 @@ class WikiJsClient:
             }
         """)
 
-        variables = {"path": path}
-        if locale:
-            variables["locale"] = locale
+        variables = {
+            "path": path,
+            "locale": locale or self.default_locale
+        }
 
         self._apply_rate_limit()
 
@@ -448,11 +449,9 @@ class WikiJsClient:
             "editor": editor,
             "isPublished": is_published,
             "isPrivate": is_private,
-            "locale": locale or self.default_locale
+            "locale": locale or self.default_locale,
+            "tags": tags or []
         }
-
-        if tags:
-            variables["tags"] = tags
 
         self._apply_rate_limit()
 
