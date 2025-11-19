@@ -86,6 +86,9 @@ python migrate.py --since-date 2024-01-01
 
 # Verbose logging
 python migrate.py -vv  # DEBUG level
+
+# Export to custom directory
+python migrate.py --spaces ENG --export-dir ./my-custom-export
 ```
 
 ### CLI Arguments
@@ -99,6 +102,7 @@ python migrate.py -vv  # DEBUG level
 - `--dry-run`: Preview migration without making changes
 - `-i, --interactive`: Launch interactive TUI for content selection
 - `-v, --verbose`: Increase verbosity (-v for INFO, -vv for DEBUG)
+- `--export-dir PATH`: Directory for exporting/importing Markdown files (default: ./confluence-export)
 - `--version`: Show version and exit
 
 ### Migration Workflows

@@ -29,20 +29,21 @@ class MarkdownExporter:
     5. Generates navigation index files (README.md)
     """
     
-    def __init__(self, config: Dict[str, Any], logger: Optional[logging.Logger] = None):
+    def __init__(self, config: Dict[str, Any], logger: Optional[logging.Logger] = None, output_dir: Optional[str] = None):
         """
         Initialize the markdown exporter.
-        
+
         Args:
             config: Configuration dictionary with export settings
             logger: Logger instance
+            output_dir: Optional output directory override (takes precedence over config)
         """
         self.config = config
         self.logger = logger or logging.getLogger('confluence_markdown_migrator.exporters.markdown_exporter')
-        
+
         # Extract export configuration
         export_config = config.get('export', {})
-        self.output_directory = Path(export_config.get('output_directory', './confluence-export'))
+        self.output_directory = Path(output_dir) if output_dir else Path(export_config.get('output_directory', './confluence-export'))
         self.create_index_files = export_config.get('create_index_files', True)
         self.organize_by_space = export_config.get('organize_by_space', True)
         

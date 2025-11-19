@@ -195,7 +195,14 @@ Examples:
         default=0,
         help='Increase verbosity (-v for INFO, -vv for DEBUG)'
     )
-    
+
+    parser.add_argument(
+        '--export-dir',
+        type=str,
+        default=None,
+        help='Directory for exporting/importing Markdown files (default: ./confluence-export)'
+    )
+
     return parser
 
 
@@ -232,9 +239,11 @@ def validate_configuration(config: dict, args: argparse.Namespace, logger: loggi
 
         # Validate import_from_markdown workflow
         if args.workflow == 'import_from_markdown':
-            # Check that output_directory is configured and exists
-            export_config = config.get('export', {})
-            output_dir = export_config.get('output_directory', './confluence-export')
+            # Derive export directory: CLI override first, then config, then default
+            if args.export_dir is not None:
+                output_dir = args.export_dir
+            else:
+                output_dir = config.get('export', {}).get('output_directory', './confluence-export')
             output_path = Path(output_dir)
 
             if not output_path.exists():
@@ -383,6 +392,8 @@ def run_migration(config: dict, args: argparse.Namespace, logger: logging.Logger
     since_date = args.since_date
     export_target = args.export_target
     workflow = args.workflow
+    # Export dir: use CLI if provided, fall back to config, default to ./confluence-export
+    export_dir = args.export_dir if args.export_dir is not None else config.get('export', {}).get('output_directory', './confluence-export')
 
     logger.info(f"Mode: {mode}, Dry-run: {dry_run}, Export target: {export_target}, Workflow: {workflow}")
 
@@ -397,7 +408,7 @@ def run_migration(config: dict, args: argparse.Namespace, logger: logging.Logger
             # Run migration orchestrator
             logger.info("Creating migration orchestrator")
             logger.info(f'Workflow: {workflow}, Target: {export_target}')
-            orchestrator = MigrationOrchestrator(config, tree, logger, workflow=workflow)
+            orchestrator = MigrationOrchestrator(config, tree, logger, workflow=workflow, export_dir=export_dir)
 
             logger.info("Starting migration orchestration")
             checkpoint_path = args.checkpoint_path or config.get('migration', {}).get('checkpoint_path')
@@ -526,7 +537,7 @@ def run_migration(config: dict, args: argparse.Namespace, logger: logging.Logger
         # Run migration orchestrator
         logger.info("Creating migration orchestrator")
         logger.info(f'Workflow: {workflow}, Target: {export_target}')
-        orchestrator = MigrationOrchestrator(config, tree, logger, workflow=workflow)
+        orchestrator = MigrationOrchestrator(config, tree, logger, workflow=workflow, export_dir=export_dir)
         
         logger.info("Starting migration orchestration")
         report = orchestrator.orchestrate_migration(tree, existing_phase_stats=existing_stats, checkpoint_path=checkpoint_path)

@@ -32,7 +32,7 @@ logger = logging.getLogger(__name__)
 class MigrationOrchestrator:
     """Central coordinator sequencing all migration phases: Fetch → Convert → Export/Import → Report."""
     
-    def __init__(self, config: Dict[str, Any], tree, logger: Optional[logging.Logger] = None, workflow: Optional[str] = None):
+    def __init__(self, config: Dict[str, Any], tree, logger: Optional[logging.Logger] = None, workflow: Optional[str] = None, export_dir: Optional[str] = None):
         """
         Initialize migration orchestrator.
 
@@ -41,6 +41,7 @@ class MigrationOrchestrator:
             tree: DocumentationTree with Confluence content
             logger: Optional logger instance
             workflow: Optional workflow mode ('export_only', 'import_only', 'export_then_import', 'import_from_markdown')
+            export_dir: Optional directory for exporting/importing Markdown files
         """
         self.config = config
         self.tree = tree
@@ -52,6 +53,9 @@ class MigrationOrchestrator:
 
         # Set workflow mode
         self.workflow = workflow or 'export_only'
+
+        # Store export directory override
+        self.export_dir = export_dir
 
         # Initialize component references (created on-demand)
         self.converter = None
@@ -365,7 +369,7 @@ class MigrationOrchestrator:
         try:
             # Create exporter
             self.logger.info("Creating Markdown exporter")
-            self.exporter = MarkdownExporter(self.config, self.logger)
+            self.exporter = MarkdownExporter(self.config, self.logger, output_dir=self.export_dir)
             
             # Export tree
             self.logger.info("Exporting documentation tree to markdown files")
@@ -403,6 +407,9 @@ class MigrationOrchestrator:
             # Get export directory from config
             export_config = self.config.get('export', {})
             output_dir = export_config.get('output_directory', './confluence-export')
+            # Override with CLI argument if provided
+            if self.export_dir:
+                output_dir = self.export_dir
             export_dir = Path(output_dir)
 
             if not export_dir.exists():
