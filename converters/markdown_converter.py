@@ -431,11 +431,40 @@ class MarkdownConverter(MarkdownifyConverter):
             if not isinstance(element, Tag):
                 return ''
 
-            # Handle <pre> tags - convert to inline code
+            # Handle <pre> tags - convert to inline code, preserve <br> tags
             if element.name == 'pre':
-                code_text = element.get_text()
-                # Remove excessive whitespace but preserve structure
-                code_lines = [line.strip() for line in code_text.split('\n') if line.strip()]
+                code_parts = []
+                for child in element.children:
+                    if isinstance(child, NavigableString):
+                        text = str(child)
+                        # Convert actual newlines to <br> markers
+                        text = text.replace('\n', '<br>')
+                        code_parts.append(text)
+                    elif isinstance(child, Tag) and child.name == 'br':
+                        code_parts.append('<br>')
+                    elif isinstance(child, Tag) and child.name == 'a':
+                        # Preserve link text in pre blocks
+                        code_parts.append(child.get_text())
+                    elif isinstance(child, Tag):
+                        text = child.get_text()
+                        text = text.replace('\n', '<br>')
+                        code_parts.append(text)
+
+                # Join all parts
+                full_text = ''.join(code_parts)
+
+                # Clean up: normalize multiple <br> and trim
+                full_text = re.sub(r'(<br>)+', '<br>', full_text)
+                full_text = full_text.strip()
+                full_text = re.sub(r'^<br>|<br>$', '', full_text)
+
+                if not full_text:
+                    return ''
+
+                # Split by <br> to get lines
+                code_lines = [line.strip() for line in full_text.split('<br>')]
+                code_lines = [line for line in code_lines if line]  # Remove empty lines
+
                 if len(code_lines) == 1:
                     # Single line - use inline code
                     return f'`{code_lines[0]}`'
