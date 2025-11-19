@@ -16,7 +16,6 @@ from gql.transport.exceptions import (
     TransportQueryError,
     TransportProtocolError
 )
-from urllib3.util.retry import Retry
 
 
 logger = logging.getLogger('confluence_markdown_migrator.importers.wikijs_client')
@@ -96,15 +95,8 @@ class WikiJsClient:
         self.default_editor = default_editor
         self._last_request_time = 0.0
 
-        # Configure retry strategy with backoff and rate-limit handling
-        retry_strategy = Retry(
-            total=max_retries,
-            backoff_factor=retry_backoff_factor,
-            status_forcelist=[429, 500, 502, 503, 504],
-            respect_retry_after_header=True
-        )
-
         # Create GraphQL transport with Bearer token authentication
+        # Note: retries parameter expects an integer, not a Retry object
         self.transport = RequestsHTTPTransport(
             url=f"{self.base_url}/graphql",
             headers={
@@ -113,7 +105,7 @@ class WikiJsClient:
             },
             verify=verify_ssl,
             timeout=timeout,
-            retries=retry_strategy
+            retries=max_retries
         )
 
         # Initialize GraphQL client
