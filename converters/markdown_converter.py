@@ -941,18 +941,46 @@ class MarkdownConverter(MarkdownifyConverter):
         # Check if this li contains nested lists
         has_nested_list = el.find(['ol', 'ul'])
         if has_nested_list:
-            # For items with nested lists, ensure the nested content is properly indented
+            # For items with nested lists, we need to combine the content properly
+            # The format is typically: "Text content\n\nnested list\n\n"
+            # We want to keep the text content as the list item label
+            # and preserve the nested list with its own formatting
+            
+            # Split into lines and filter out empty lines that separate the content
             lines = text.split('\n')
             result_lines = []
-            first_line = True
-            for line in lines:
-                if first_line:
-                    result_lines.append(f'{indent}{bullet} {line}')
-                    first_line = False
-                else:
-                    # Nested content already has its own indentation from recursive conversion
-                    result_lines.append(line)
-            return '\n'.join(result_lines) + '\n'
+            content_added = False
+            
+            for i, line in enumerate(lines):
+                is_empty = not line.strip()
+                is_list_marker = re.match(r'^\s*\d+\.', line) or re.match(r'^\s*[a-z]\.', line, re.IGNORECASE)
+                
+                if not content_added:
+                    # This is the main content of the list item (before the nested list)
+                    if is_empty:
+                        # Skip empty lines between content and nested list
+                        continue
+                    elif is_list_marker:
+                        # We've reached the nested list, add the main content bullet
+                        if result_lines:
+                            # Combine the accumulated content lines
+                            content = ' '.join(result_lines)
+                            line_with_bullet = f'{indent}{bullet} {content}'
+                        else:
+                            # Empty content
+                            line_with_bullet = f'{indent}{bullet} '
+                        
+                        final_lines = [line_with_bullet]
+                        # Add the remaining lines (the nested list)
+                        final_lines.extend(lines[i:])
+                        return '\n'.join(final_lines) + '\n'
+                    else:
+                        # Accumulate content lines
+                        result_lines.append(line)
+                
+            # If we get here without finding nested list markers, just use standard formatting
+            content = ' '.join(result_lines) if result_lines else ''
+            return f'{indent}{bullet} {content}\n{text}\n'
         else:
             return f'{indent}{bullet} {text}\n'
 
