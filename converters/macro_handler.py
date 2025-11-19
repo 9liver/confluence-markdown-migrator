@@ -78,6 +78,7 @@ class MacroHandler:
     def _find_macros(self, soup: BeautifulSoup, format_type: str) -> List[Tuple[Tag, str]]:
         """Find all macro elements in the HTML."""
         macros = []
+        processed_elements = set()
 
         if format_type == 'storage':
             # Find ac:structured-macro elements
@@ -85,41 +86,66 @@ class MacroHandler:
                 macro_name = self._get_macro_name(element, format_type)
                 if macro_name:
                     macros.append((element, macro_name))
+                    processed_elements.add(id(element))
         else:  # export
             # Find elements with data-macro-name attribute
             for element in soup.find_all(attrs={'data-macro-name': True}):
                 macro_name = element.get('data-macro-name')
-                if macro_name:
+                if macro_name and id(element) not in processed_elements:
                     macros.append((element, macro_name))
+                    processed_elements.add(id(element))
 
             # Also find confluence-information-macro elements (info, warning, note, tip boxes)
-            for element in soup.find_all(class_=lambda x: x and 'confluence-information-macro' in x):
-                # Determine macro type from class
-                classes = element.get('class', [])
-                macro_name = 'info'  # default
-                for cls in classes:
-                    if 'confluence-information-macro-warning' in cls:
-                        macro_name = 'warning'
-                        break
-                    elif 'confluence-information-macro-note' in cls:
-                        macro_name = 'note'
-                        break
-                    elif 'confluence-information-macro-tip' in cls:
-                        macro_name = 'tip'
-                        break
-                    elif 'confluence-information-macro-information' in cls:
-                        macro_name = 'info'
-                        break
+            # Only match div elements with the main macro class, not icons/spans
+            for element in soup.find_all('div', class_=True):
+                # Skip if already processed
+                if id(element) in processed_elements:
+                    continue
 
-                # Only add if not already found via data-macro-name
-                if not element.get('data-macro-name'):
-                    macros.append((element, macro_name))
+                classes = element.get('class', [])
+                if isinstance(classes, str):
+                    classes = classes.split()
+
+                # Check if this is an information macro (has exactly 'confluence-information-macro' class)
+                if 'confluence-information-macro' not in classes:
+                    continue
+
+                # Skip icon spans and body divs
+                if 'confluence-information-macro-icon' in classes:
+                    continue
+                if 'confluence-information-macro-body' in classes:
+                    continue
+
+                # Determine macro type from class - check more specific types first
+                class_str = ' '.join(classes)
+                macro_name = 'info'  # default
+
+                if 'confluence-information-macro-warning' in class_str:
+                    macro_name = 'warning'
+                elif 'confluence-information-macro-note' in class_str:
+                    macro_name = 'note'
+                elif 'confluence-information-macro-tip' in class_str:
+                    macro_name = 'tip'
+                elif 'confluence-information-macro-information' in class_str:
+                    macro_name = 'info'
+
+                macros.append((element, macro_name))
+                processed_elements.add(id(element))
 
             # Also find code panel divs that might not have data-macro-name
-            for element in soup.find_all('div', class_=lambda x: x and 'code' in x and 'panel' in x):
-                # Check if already processed
-                if not element.get('data-macro-name') and element not in [m[0] for m in macros]:
+            # Must have both "code" and "panel" as separate class names (not substrings)
+            for element in soup.find_all('div'):
+                if id(element) in processed_elements:
+                    continue
+                classes = element.get('class', [])
+                if isinstance(classes, str):
+                    classes = classes.split()
+                # Check for actual "code" class and "panel" class (not codeHeader or panelHeader)
+                has_code = any(cls == 'code' for cls in classes)
+                has_panel = any(cls == 'panel' or cls == 'pdl' for cls in classes)
+                if has_code and has_panel:
                     macros.append((element, 'code'))
+                    processed_elements.add(id(element))
 
         return macros
     
@@ -179,7 +205,7 @@ class MacroHandler:
         if not language:
             language = self._extract_language_from_syntaxhighlighter(element)
 
-        language = language or 'text'
+        language = language or ''
         collapse = self._extract_parameter(element, 'collapse', format_type) or 'false'
         theme = self._extract_parameter(element, 'theme', format_type)
 
@@ -193,15 +219,43 @@ class MacroHandler:
             if code_header:
                 title = code_header.get_text(strip=True)
 
-        # Extract code content
+        # Extract code content - always get text, not HTML
         code = ''
         # First check for pre element with syntaxhighlighter
         pre_elem = element.find('pre', class_='syntaxhighlighter-pre')
         if pre_elem:
             code = pre_elem.get_text()
+            # Also try to get language from this element if not yet found
+            if not language:
+                params = pre_elem.get('data-syntaxhighlighter-params', '')
+                if params:
+                    for param in params.split(';'):
+                        param = param.strip()
+                        if param.startswith('brush:'):
+                            lang = param.replace('brush:', '').strip()
+                            language_map = {
+                                'bash': 'bash', 'shell': 'bash', 'sh': 'bash',
+                                'python': 'python', 'py': 'python',
+                                'javascript': 'javascript', 'js': 'javascript',
+                                'java': 'java', 'sql': 'sql', 'xml': 'xml',
+                                'html': 'html', 'css': 'css', 'json': 'json',
+                                'yaml': 'yaml', 'yml': 'yaml', 'text': 'text', 'plain': 'text',
+                            }
+                            language = language_map.get(lang.lower(), lang)
+                            break
         else:
-            # Fallback to body extraction
-            code = self._extract_body(element, format_type, plain_text=True)
+            # Try to find any pre element
+            pre_elem = element.find('pre')
+            if pre_elem:
+                code = pre_elem.get_text()
+            else:
+                # Try codeContent div
+                code_content = element.find(class_='codeContent')
+                if code_content:
+                    code = code_content.get_text()
+                else:
+                    # Fallback to element text
+                    code = element.get_text()
 
         # Create pre > code block
         new_soup = BeautifulSoup('', 'lxml')
@@ -209,7 +263,7 @@ class MacroHandler:
         code_tag = new_soup.new_tag('code')
 
         # Add language class
-        if language and language != 'text':
+        if language:
             code_tag['class'] = f'language-{language}'
 
         code_tag.string = code or ''
@@ -335,9 +389,13 @@ class MacroHandler:
             # Check for confluence-information-macro-body class
             body_div = element.find(class_='confluence-information-macro-body')
             if body_div:
+                if plain_text:
+                    return body_div.get_text() or ''
                 return body_div.decode_contents(formatter="html") or ''
 
-            # Return inner HTML if no specific body format
+            # Return content based on plain_text flag
+            if plain_text:
+                return element.get_text() or ''
             return element.decode_contents(formatter="html") or ''
 
         return ''
@@ -396,10 +454,10 @@ class MacroHandler:
         """Create blockquote structure for macro conversion."""
         new_soup = BeautifulSoup('', 'lxml')
         blockquote = new_soup.new_tag('blockquote')
-        
+
         if callout_type:
             blockquote['class'] = f'is-{callout_type}'
-        
+
         # Add title
         if title:
             title_p = new_soup.new_tag('p')
@@ -407,11 +465,41 @@ class MacroHandler:
             title_strong.string = title
             title_p.append(title_strong)
             blockquote.append(title_p)
-        
-        # Add body content
+
+        # Add body content - parse and extract just the content, not wrapper elements
         if body:
-            body_div = new_soup.new_tag('div')
-            body_div.append(BeautifulSoup(body, 'lxml'))
-            blockquote.append(body_div)
-        
+            # Parse the body HTML
+            body_soup = BeautifulSoup(body, 'lxml')
+            # Get the body content, stripping html/body wrapper tags that lxml adds
+            body_content = body_soup.find('body')
+            if body_content:
+                # Move all children to the blockquote, but skip empty/title elements
+                for child in list(body_content.children):
+                    # Skip NavigableStrings that are just whitespace
+                    if not hasattr(child, 'name') or child.name is None:
+                        text = str(child).strip()
+                        if not text:
+                            continue
+                        # Create a text node
+                        blockquote.append(text)
+                        continue
+
+                    # Skip empty elements (no text content)
+                    child_text = child.get_text(strip=True) if hasattr(child, 'get_text') else ''
+                    if not child_text:
+                        continue
+
+                    # Skip if this child is just the title text repeated
+                    if title and child_text == title:
+                        continue
+
+                    blockquote.append(child.extract() if hasattr(child, 'extract') else child)
+            else:
+                # Fallback: just append the text
+                text = body_soup.get_text(strip=True)
+                if text and text != title:  # Don't duplicate title
+                    p = new_soup.new_tag('p')
+                    p.string = text
+                    blockquote.append(p)
+
         element.replace_with(blockquote)

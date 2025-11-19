@@ -1,5 +1,6 @@
 """Markdown converter orchestrator for high-fidelity HTML to Markdown conversion."""
 
+import html
 import logging
 import re
 from datetime import datetime
@@ -222,25 +223,59 @@ class MarkdownConverter(MarkdownifyConverter):
     
     def _clean_markdown(self, markdown: str) -> str:
         """Clean up markdown formatting issues."""
+        # Decode HTML entities (e.g., &amp; -> &, &lt; -> <)
+        markdown = html.unescape(markdown)
+
         # Remove trailing whitespace from lines
         lines = [line.rstrip() for line in markdown.split('\n')]
-        
-        # Reduce multiple consecutive blank lines (max 2)
+
+        # Reduce multiple consecutive blank/empty lines
         cleaned_lines = []
         blank_count = 0
-        
+
         for line in lines:
-            if line.strip() == '':
+            # Check if line is empty or just a blockquote marker
+            stripped = line.strip()
+            is_blank = stripped == '' or stripped == '>'
+
+            if is_blank:
                 blank_count += 1
-                if blank_count <= 2:  # Keep max 2 consecutive blank lines
-                    cleaned_lines.append('')
+                # Only keep first empty line in a sequence
+                if blank_count == 1:
+                    # Preserve blockquote continuation if previous line was blockquote
+                    if cleaned_lines and cleaned_lines[-1].strip().startswith('>'):
+                        if stripped == '>':
+                            cleaned_lines.append('>')
+                        else:
+                            cleaned_lines.append('')
+                    else:
+                        cleaned_lines.append(line)
             else:
                 blank_count = 0
                 cleaned_lines.append(line)
-        
+
+        # Final pass: remove consecutive empty blockquote lines
+        final_lines = []
+        for i, line in enumerate(cleaned_lines):
+            if line.strip() == '>':
+                # Skip if previous line was also empty blockquote
+                if final_lines and final_lines[-1].strip() == '>':
+                    continue
+            final_lines.append(line)
+
+        markdown = '\n'.join(final_lines)
+
+        # Aggressive cleanup of empty blockquote sequences
+        # Replace multiple empty blockquote lines with single one
+        markdown = re.sub(r'(>\s*\n){2,}', '>\n', markdown)
+        # Remove empty lines at start of blockquotes (after > {.is-xxx})
+        markdown = re.sub(r'(> \{\.is-\w+\}\n)(>\s*\n)+', r'\1', markdown)
+        # Remove empty lines before content in blockquotes
+        markdown = re.sub(r'(>\s*\n)+(> [^>\s])', r'\1\2', markdown)
+
         # Ensure single trailing newline
-        markdown = '\n'.join(cleaned_lines).rstrip() + '\n'
-        
+        markdown = markdown.rstrip() + '\n'
+
         return markdown
     
     def _convert_callouts_to_admonitions(self, markdown: str) -> str:
@@ -699,12 +734,34 @@ class MarkdownConverter(MarkdownifyConverter):
         """Handle blockquotes, check for callout classes."""
         # Check for callout classes
         classes = el.get('class', [])
+        callout_class = None
         for cls in classes:
             if cls.startswith('is-'):
-                callout_type = cls.replace('is-', '')
-                return f'> {{.{cls}}}\n' + super().convert_blockquote(el, text, parent_tags, **kwargs)
+                callout_class = cls
+                break
 
-        return super().convert_blockquote(el, text, parent_tags, **kwargs)
+        # Clean up text - ensure each line is properly prefixed
+        text = text.strip()
+        if not text:
+            return ''
+
+        # Add > prefix to each line
+        lines = text.split('\n')
+        quoted_lines = []
+        for line in lines:
+            # Don't double-prefix lines that already start with >
+            if line.startswith('>'):
+                quoted_lines.append(line)
+            else:
+                quoted_lines.append(f'> {line}' if line.strip() else '>')
+
+        result = '\n'.join(quoted_lines)
+
+        # Add callout class marker at the beginning
+        if callout_class:
+            result = f'> {{.{callout_class}}}\n{result}'
+
+        return result + '\n\n'
 
     def convert_span(self, el, text, parent_tags=None, **kwargs):
         """Handle span elements, including Confluence anchors."""
