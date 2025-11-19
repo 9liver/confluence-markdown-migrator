@@ -184,16 +184,8 @@ class WikiJsClient:
                         editor
                         createdAt
                         updatedAt
-                        author {
-                            id
-                            name
-                            email
-                        }
-                        creator {
-                            id
-                            name
-                            email
-                        }
+                        authorId
+                        creatorId
                         locale
                     }
                 }
@@ -283,16 +275,8 @@ class WikiJsClient:
                         editor
                         createdAt
                         updatedAt
-                        author {
-                            id
-                            name
-                            email
-                        }
-                        creator {
-                            id
-                            name
-                            email
-                        }
+                        authorId
+                        creatorId
                         locale
                     }
                 }
@@ -350,16 +334,8 @@ class WikiJsClient:
                         editor
                         createdAt
                         updatedAt
-                        author {
-                            id
-                            name
-                            email
-                        }
-                        creator {
-                            id
-                            name
-                            email
-                        }
+                        authorId
+                        creatorId
                         locale
                     }
                 }
