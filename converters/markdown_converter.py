@@ -632,6 +632,70 @@ class MarkdownConverter(MarkdownifyConverter):
         result = '\n'.join(markdown_rows) + '\n\n'
         return result
     
+    def convert_ol(self, el, text, parent_tags=None, **kwargs):
+        """Handle ordered lists, tracking nesting for letter conversion."""
+        # Check if this ol is nested inside another ol
+        parent = el.parent
+        is_nested = False
+        while parent:
+            if parent.name == 'ol':
+                is_nested = True
+                break
+            if parent.name == 'li':
+                parent = parent.parent
+            else:
+                break
+
+        if is_nested:
+            # Mark this as a nested ol for convert_li to handle
+            el['data-nested-ol'] = 'true'
+
+        return text + '\n'
+
+    def convert_li(self, el, text, parent_tags=None, **kwargs):
+        """Handle list items with proper nesting and letter numbering."""
+        parent = el.parent
+        if not parent:
+            return text
+
+        # Determine nesting level
+        depth = 0
+        ancestor = parent
+        while ancestor:
+            if ancestor.name in ['ol', 'ul']:
+                depth += 1
+            ancestor = ancestor.parent
+        depth = max(0, depth - 1)  # Adjust for 0-based indentation
+
+        # Get item index
+        siblings = [child for child in parent.children if hasattr(child, 'name') and child.name == 'li']
+        try:
+            index = siblings.index(el)
+        except ValueError:
+            index = 0
+
+        # Determine bullet/number style
+        indent = '   ' * depth
+
+        if parent.name == 'ol':
+            # Check if this is a nested ordered list
+            is_nested_ol = parent.get('data-nested-ol') == 'true'
+            if is_nested_ol:
+                # Use letters for nested ordered lists: a), b), c), etc.
+                letter = chr(ord('a') + (index % 26))
+                bullet = f'- {letter})'
+            else:
+                # Use numbers for top-level ordered lists
+                bullet = f'{index + 1}.'
+        else:
+            # Unordered list
+            bullet = '-'
+
+        # Clean up text
+        text = text.strip()
+
+        return f'{indent}{bullet} {text}\n'
+
     def convert_blockquote(self, el, text, parent_tags=None, **kwargs):
         """Handle blockquotes, check for callout classes."""
         # Check for callout classes
@@ -639,15 +703,22 @@ class MarkdownConverter(MarkdownifyConverter):
         for cls in classes:
             if cls.startswith('is-'):
                 callout_type = cls.replace('is-', '')
-                return f'> {{.{cls}}}\\n' + super().convert_blockquote(el, text, parent_tags, **kwargs)
-        
+                return f'> {{.{cls}}}\n' + super().convert_blockquote(el, text, parent_tags, **kwargs)
+
         return super().convert_blockquote(el, text, parent_tags, **kwargs)
-    
+
     def convert_code(self, el, text, parent_tags=None, **kwargs):
         """Handle inline code and code blocks."""
-        language = self._extract_code_language(el)
-        if language:
-            return f"```{language}\\n{text.strip()}\\n```\\n\\n"
+        # Check if this is a code block (inside pre) or inline code
+        parent = el.parent
+        if parent and parent.name == 'pre':
+            # This is a code block - extract language
+            language = self._extract_code_language(el)
+            if language:
+                return f"```{language}\n{text.strip()}\n```\n\n"
+            return f"```\n{text.strip()}\n```\n\n"
+
+        # Inline code - just wrap in backticks
         return f"`{text}`"
     
     def convert_img(self, el, text, parent_tags=None, **kwargs):
