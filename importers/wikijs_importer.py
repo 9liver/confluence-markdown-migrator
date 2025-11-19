@@ -494,6 +494,59 @@ class WikiJsImporter:
         """Check if progress bars should be displayed."""
         return tqdm is not None and self.config.get('export', {}).get('progress_bars', True)
 
+    def rollback(self) -> Dict[str, Any]:
+        """
+        Rollback the import by deleting created pages and attachments.
+
+        Returns:
+            Dictionary with rollback statistics
+        """
+        rollback_stats = {
+            'rollback_executed': True,
+            'pages_deleted': 0,
+            'attachments_deleted': 0,
+            'errors': []
+        }
+
+        # Delete created pages
+        for page_info in self.created_resources['pages']:
+            try:
+                page_id = page_info['id'] if isinstance(page_info, dict) else page_info
+                self.client.delete_page(page_id)
+                rollback_stats['pages_deleted'] += 1
+                self.logger.debug(f"Deleted page: {page_id}")
+            except Exception as e:
+                self.logger.error(f"Failed to delete page {page_id}: {e}")
+                rollback_stats['errors'].append({
+                    'type': 'page',
+                    'id': page_id,
+                    'error': str(e)
+                })
+
+        # Delete created attachments
+        for att_id in self.created_resources['attachments']:
+            try:
+                self.client.delete_attachment(att_id)
+                rollback_stats['attachments_deleted'] += 1
+                self.logger.debug(f"Deleted attachment: {att_id}")
+            except Exception as e:
+                self.logger.error(f"Failed to delete attachment {att_id}: {e}")
+                rollback_stats['errors'].append({
+                    'type': 'attachment',
+                    'id': att_id,
+                    'error': str(e)
+                })
+
+        self.logger.info(
+            f"Rollback completed: {rollback_stats['pages_deleted']} pages deleted, "
+            f"{rollback_stats['attachments_deleted']} attachments deleted"
+        )
+
+        # Reset tracking
+        self.created_resources = {'pages': [], 'attachments': []}
+
+        return rollback_stats
+
 
 # Export importer for easy access
 __all__ = ['WikiJsImporter']
