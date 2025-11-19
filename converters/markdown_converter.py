@@ -461,9 +461,9 @@ class MarkdownConverter(MarkdownifyConverter):
                 if not full_text:
                     return ''
 
-                # Split by <br> to get lines
-                code_lines = [line.strip() for line in full_text.split('<br>')]
-                code_lines = [line for line in code_lines if line]  # Remove empty lines
+                # Split by <br> to get lines - use rstrip to preserve indentation
+                code_lines = [line.rstrip() for line in full_text.split('<br>')]
+                code_lines = [line for line in code_lines if line.strip()]  # Remove empty lines
 
                 if len(code_lines) == 1:
                     # Single line - use inline code
@@ -501,9 +501,9 @@ class MarkdownConverter(MarkdownifyConverter):
                 if not full_text:
                     return ''
 
-                # Split by <br> to get lines
-                lines = [line.strip() for line in full_text.split('<br>')]
-                lines = [line for line in lines if line]  # Remove empty lines
+                # Split by <br> to get lines - use rstrip to preserve indentation
+                lines = [line.rstrip() for line in full_text.split('<br>')]
+                lines = [line for line in lines if line.strip()]  # Remove empty lines
 
                 if len(lines) == 1:
                     return f'`{lines[0]}`'
