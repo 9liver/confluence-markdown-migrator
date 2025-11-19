@@ -62,9 +62,11 @@ class HtmlListFixer:
         # Get the next sibling of this list
         next_sibling = current_ol.find_next_sibling()
         
-        while next_sibling:
+        while next_sibling is not None:
+            self.logger.debug(f"Processing sibling: {type(next_sibling).__name__}")
+            
             # If it's another ordered list, merge it
-            if next_sibling.name == 'ol':
+            if isinstance(next_sibling, Tag) and next_sibling.name == 'ol':
                 self.logger.debug("Merging consecutive <ol> elements")
                 
                 # Move all list items from next_sibling to current_ol
@@ -74,7 +76,7 @@ class HtmlListFixer:
                 
                 # Remove the now-empty ol
                 to_remove = next_sibling
-                next_sibling = next_sibling.find_next_sibling()
+                next_sibling = to_remove.find_next_sibling()
                 to_remove.decompose()
                 continue
                 
@@ -85,16 +87,27 @@ class HtmlListFixer:
                 continue
                 
             # If it's empty or whitespace, skip it
-            elif (isinstance(next_sibling, Tag) and not next_sibling.get_text(strip=True)) or \
-                 (hasattr(next_sibling, 'strip') and not next_sibling.strip()):
-                empty = next_sibling
-                next_sibling = next_sibling.find_next_sibling()
-                empty.extract()
-                continue
+            elif isinstance(next_sibling, Tag):
+                # Tag element - check if it has meaningful content
+                if not next_sibling.get_text(strip=True):
+                    empty = next_sibling
+                    next_sibling = empty.find_next_sibling()
+                    empty.decompose()
+                    continue
+            else:
+                # NavigableString or similar text node
+                text = str(next_sibling)
+                if not text.strip():
+                    empty = next_sibling
+                    next_sibling = empty.find_next_sibling()
+                    if empty and empty.extract:
+                        empty.extract()
+                    continue
                 
             # Stop at any other element type
-            else:
-                break
+            break
+        
+        return
 
     def _is_code_element(self, element) -> bool:
         """Check if an element is a code block that belongs in a list item."""
