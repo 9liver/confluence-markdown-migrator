@@ -443,46 +443,44 @@ class MarkdownConverter(MarkdownifyConverter):
                     # Multi-line - join with <br> for table cell
                     return '`' + '`<br>`'.join(code_lines) + '`'
 
-            # Handle <code> tags - preserve <br> tags inside
+            # Handle <code> tags - preserve <br> tags and original formatting
             if element.name == 'code':
                 code_parts = []
                 for child in element.children:
                     if isinstance(child, NavigableString):
-                        text = str(child).strip()
-                        if text:
-                            code_parts.append(text)
+                        # Preserve the original text including spaces
+                        text = str(child)
+                        # Convert actual newlines to <br> markers
+                        text = text.replace('\n', '<br>')
+                        code_parts.append(text)
                     elif isinstance(child, Tag) and child.name == 'br':
                         code_parts.append('<br>')
                     elif isinstance(child, Tag):
-                        # Get text from nested elements
-                        text = child.get_text().strip()
-                        if text:
-                            code_parts.append(text)
+                        # Get text from nested elements, preserve newlines
+                        text = child.get_text()
+                        text = text.replace('\n', '<br>')
+                        code_parts.append(text)
 
-                # Join parts, handling <br> markers
-                if not code_parts:
+                # Join all parts
+                full_text = ''.join(code_parts)
+
+                # Clean up: normalize multiple <br> and trim
+                full_text = re.sub(r'(<br>)+', '<br>', full_text)
+                full_text = full_text.strip()
+                full_text = re.sub(r'^<br>|<br>$', '', full_text)
+
+                if not full_text:
                     return ''
 
-                # Process the parts to create proper inline code with line breaks
-                result_parts = []
-                current_text = []
+                # Split by <br> to get lines
+                lines = [line.strip() for line in full_text.split('<br>')]
+                lines = [line for line in lines if line]  # Remove empty lines
 
-                for part in code_parts:
-                    if part == '<br>':
-                        if current_text:
-                            result_parts.append(''.join(current_text))
-                            current_text = []
-                    else:
-                        current_text.append(part)
-
-                if current_text:
-                    result_parts.append(''.join(current_text))
-
-                if len(result_parts) == 1:
-                    return f'`{result_parts[0]}`'
+                if len(lines) == 1:
+                    return f'`{lines[0]}`'
                 else:
-                    # Multi-line code in table cell - use <br> between code segments
-                    return '`' + '`<br>`'.join(result_parts) + '`'
+                    # Multi-line code in table cell - each line as inline code with <br>
+                    return '`' + '`<br>`'.join(lines) + '`'
 
             # Handle <br> tags
             if element.name == 'br':
