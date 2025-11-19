@@ -10,6 +10,7 @@ from bs4 import BeautifulSoup
 from markdownify import MarkdownConverter as MarkdownifyConverter
 
 from .html_cleaner import HtmlCleaner
+from .html_list_fixer import HtmlListFixer
 from .link_processor import LinkProcessor
 from .macro_handler import MacroHandler
 
@@ -50,6 +51,7 @@ class MarkdownConverter(MarkdownifyConverter):
         
         # Initialize helper components
         self.html_cleaner = HtmlCleaner(self.logger)
+        self.list_fixer = HtmlListFixer(self.logger)
         self.macro_handler = MacroHandler(self.logger)
         self.link_processor = None  # Initialized when confluence_base_url is known
         
@@ -82,6 +84,9 @@ class MarkdownConverter(MarkdownifyConverter):
             
             # Step 2: Parse HTML
             soup = self._parse_html(page.content)
+            
+            # Step 2.5: Fix broken list structures (if using HTML mode or if fixing is enabled)
+            soup = self._fix_list_structure(soup, format_type)
             
             # Step 3: Clean HTML
             soup = self.html_cleaner.clean(soup, format_type)
@@ -119,15 +124,23 @@ class MarkdownConverter(MarkdownifyConverter):
     def convert_standalone_html(self, html_content: str, format_type: str = 'export') -> str:
         """Convert standalone HTML string to markdown (not part of markdownify pipeline)."""
         self.logger.debug("Converting HTML to markdown")
-        
+
         soup = self._parse_html(html_content)
         format_type = self._detect_format(html_content) if not format_type else format_type
-        
+
         # Clean and convert
         soup = self.html_cleaner.clean(soup, format_type)
         soup, _, _ = self.macro_handler.convert(soup, format_type)
-        
-        return self._convert_to_markdown(soup)
+
+        # Convert to markdown
+        raw_markdown = self._convert_to_markdown(soup)
+
+        # Apply post-processing (creates a dummy page object for compatibility)
+        class DummyPage:
+            id = 'standalone'
+        processed_markdown = self._post_process_markdown(raw_markdown, DummyPage())
+
+        return processed_markdown
     
     def _detect_format(self, html_content: str) -> str:
         """Detect HTML format (storage or export)."""
@@ -149,6 +162,16 @@ class MarkdownConverter(MarkdownifyConverter):
         """Parse HTML content with BeautifulSoup."""
         return BeautifulSoup(html_content, 'lxml')
     
+    def _fix_list_structure(self, soup: BeautifulSoup, format_type: str) -> BeautifulSoup:
+        """Fix broken list structures in HTML before conversion."""
+        self.logger.debug("Fixing HTML list structures")
+        
+        # Apply list fixing using HtmlListFixer
+        fixed_html = self.list_fixer.fix_html(str(soup))
+        
+        # Parse the fixed HTML back to soup
+        return BeautifulSoup(fixed_html, 'lxml')
+    
     def _convert_to_markdown(self, soup: BeautifulSoup) -> str:
         """Convert BeautifulSoup to markdown using the subclassed converter."""
         self.logger.debug("Converting to markdown")
@@ -160,34 +183,155 @@ class MarkdownConverter(MarkdownifyConverter):
     def _post_process_markdown(self, markdown: str, page: Any) -> str:
         """Apply post-processing to generated markdown."""
         self.logger.debug("Post-processing markdown")
-        
+
         link_stats = None
-        
+
         # Normalize headings
         markdown = self._normalize_headings(markdown)
-        
+
         # Apply heading offset if configured
         if self.heading_offset != 0:
             markdown = self._apply_heading_offset(markdown, self.heading_offset)
-        
+
         # Clean up whitespace and formatting
         markdown = self._clean_markdown(markdown)
-        
+
         # Apply additional normalizations
         markdown = self._normalize_tables(markdown)
         markdown = self._normalize_lists(markdown)
         markdown = self._preserve_code_blocks(markdown)
-        
+
+        # Convert callouts to admonition syntax BEFORE indentation
+        if self.target_wiki in ['wikijs', 'both']:
+            markdown = self._convert_callouts_to_admonitions(markdown)
+
+        # Indent code blocks that are part of list items
+        markdown = self._indent_code_blocks_in_lists(markdown)
+
+        # Final cleanup - remove excessive blank lines
+        markdown = self._final_cleanup(markdown)
+
         # Process links and store stats
         if self.link_processor:
             markdown, link_stats = self.link_processor.process_links(markdown, page)
             self._last_link_stats = link_stats  # Store for later use
-        
-        # Convert callouts to admonition syntax if needed
-        if self.target_wiki in ['wikijs', 'both']:
-            markdown = self._convert_callouts_to_admonitions(markdown)
-        
+
         return markdown
+
+    def _final_cleanup(self, markdown: str) -> str:
+        """Final cleanup pass - remove excessive blank lines."""
+        # Replace 3+ consecutive newlines with 2 newlines
+        while '\n\n\n' in markdown:
+            markdown = markdown.replace('\n\n\n', '\n\n')
+
+        # Fix sub-list indentation (2 spaces -> 3 spaces for consistency)
+        lines = markdown.split('\n')
+        result = []
+        for line in lines:
+            # Check for sub-list items with 2-space indent
+            if re.match(r'^  \d+\.\s+', line):
+                line = ' ' + line  # Add one more space
+            result.append(line)
+
+        return '\n'.join(result)
+
+    def _indent_code_blocks_in_lists(self, markdown: str) -> str:
+        """Indent content that follows list items to keep them part of the list."""
+        lines = markdown.split('\n')
+        result = []
+        current_indent = 0
+        in_list = False
+        in_code_block = False
+
+        i = 0
+        while i < len(lines):
+            line = lines[i]
+
+            # Track code block state (for non-list context)
+            if line.strip().startswith('```') and not in_list:
+                in_code_block = not in_code_block
+
+            # Check if this is a list item
+            list_match = re.match(r'^(\s*)([-*]|\d+\.)\s+', line)
+            if list_match:
+                in_list = True
+                indent_spaces = len(list_match.group(1))
+                # Calculate indent for content under this list item
+                current_indent = indent_spaces + 3
+                result.append(line)
+                i += 1
+                continue
+
+            # If we're in a list context, indent various content types
+            if in_list and current_indent > 0 and not in_code_block:
+                indent = ' ' * current_indent
+                stripped = line.strip()
+
+                # Check if this line should end the list context
+                if stripped and not stripped.startswith('>') and not stripped.startswith('```') and not stripped.startswith('**'):
+                    # Check if it's a new top-level list item or non-list content
+                    if re.match(r'^\d+\.\s+', stripped) and not line.startswith(' '):
+                        # New top-level list item
+                        in_list = False
+                        current_indent = 0
+                        result.append(line)
+                        i += 1
+                        continue
+
+                # Handle code blocks
+                if stripped.startswith('```'):
+                    # Add blank line before if needed
+                    if result and result[-1].strip():
+                        result.append('')
+
+                    # Indent the opening fence
+                    result.append(indent + stripped)
+                    i += 1
+
+                    # Indent all lines until closing fence
+                    while i < len(lines):
+                        code_line = lines[i]
+                        if code_line.strip().startswith('```'):
+                            result.append(indent + code_line.strip())
+                            i += 1
+                            break
+                        else:
+                            result.append(indent + code_line)
+                            i += 1
+                    continue
+
+                # Handle blockquotes
+                elif stripped.startswith('>'):
+                    # Indent blockquote
+                    if result and result[-1].strip():
+                        result.append('')
+                    result.append(indent + stripped)
+                    i += 1
+
+                    # Continue indenting blockquote lines
+                    while i < len(lines) and lines[i].strip().startswith('>'):
+                        result.append(indent + lines[i].strip())
+                        i += 1
+                    continue
+
+                # Handle bold titles (like **~/.profile**)
+                elif stripped.startswith('**') and stripped.endswith('**'):
+                    if result and result[-1].strip():
+                        result.append('')
+                    result.append(indent + stripped)
+                    i += 1
+                    continue
+
+                # Empty lines - keep them but don't break list context yet
+                elif not stripped:
+                    result.append('')
+                    i += 1
+                    continue
+
+            result.append(line)
+            i += 1
+
+        return '\n'.join(result)
     
     def _normalize_headings(self, markdown: str) -> str:
         """Ensure proper heading hierarchy starting from H1."""
@@ -279,29 +423,56 @@ class MarkdownConverter(MarkdownifyConverter):
         return markdown
     
     def _convert_callouts_to_admonitions(self, markdown: str) -> str:
-        """Convert blockquote callouts to Wiki.js admonition syntax."""
+        """Convert blockquote callouts to simple, universally-supported format."""
         import re
         lines = markdown.split('\n')
         result = []
-        
-        for line in lines:
-            # Check if line is a blockquote with callout class
-            if re.match(r'> \{\.is-(info|warning|success|danger)\}', line):
-                callout_match = re.match(r'> \{\.is-(info|warning|success|danger)\}', line)
+        skip_next_empty = False
+
+        i = 0
+        while i < len(lines):
+            line = lines[i]
+
+            # Check if line is a blockquote with callout class marker
+            callout_match = re.match(r'> \{\.is-(info|warning|success|danger)\}', line)
+            if callout_match:
                 callout_type = callout_match.group(1)
-                
-                # Map to Wiki.js admonition types
-                admonition_types = {
-                    'info': 'INFO',
-                    'warning': 'WARNING',
-                    'success': 'SUCCESS',
-                    'danger': 'DANGER'
+
+                # Map to human-readable labels
+                label_map = {
+                    'info': 'Info',
+                    'warning': 'Warnung',
+                    'success': 'Tipp',
+                    'danger': 'Achtung'
                 }
-                wiki_type = admonition_types.get(callout_type, 'NOTE')
-                result.append(f"> [!{wiki_type}]")
-            else:
-                result.append(line)
-        
+                label = label_map.get(callout_type, 'Hinweis')
+
+                # Look at next non-empty blockquote line to see if it has a title
+                j = i + 1
+                while j < len(lines) and lines[j].strip() == '>':
+                    j += 1
+
+                if j < len(lines) and lines[j].startswith('>'):
+                    next_content = lines[j][1:].strip()
+                    # Check if next line is already a bold title
+                    if next_content.startswith('**') and next_content.endswith('**'):
+                        # Already has title, just skip the class marker
+                        i += 1
+                        continue
+                    else:
+                        # Add label as first line
+                        result.append(f'> **{label}**')
+                        result.append('>')
+                else:
+                    result.append(f'> **{label}**')
+                    result.append('>')
+
+                i += 1
+                continue
+
+            result.append(line)
+            i += 1
+
         return '\n'.join(result)
     
     def _update_conversion_metadata(self, page: Any, markdown: str, macro_stats: Dict[str, Any],
