@@ -178,7 +178,9 @@ class WikiJsClient:
                         privateNS
                         publishStartDate
                         publishEndDate
-                        tags
+                        tags {
+                            tag
+                        }
                         editor
                         createdAt
                         updatedAt
@@ -275,7 +277,9 @@ class WikiJsClient:
                         privateNS
                         publishStartDate
                         publishEndDate
-                        tags
+                        tags {
+                            tag
+                        }
                         editor
                         createdAt
                         updatedAt
@@ -340,7 +344,9 @@ class WikiJsClient:
                         privateNS
                         publishStartDate
                         publishEndDate
-                        tags
+                        tags {
+                            tag
+                        }
                         editor
                         createdAt
                         updatedAt
@@ -420,11 +426,11 @@ class WikiJsClient:
         """
         mutation = gql("""
             mutation CreatePage($content: String!, $description: String!, $editor: String!, $isPublished: Boolean!,
-                               $isPrivate: Boolean!, $locale: String, $path: String!, $privateNS: String,
+                               $isPrivate: Boolean!, $locale: String, $path: String!,
                                $publishEndDate: Date, $publishStartDate: Date, $tags: [String], $title: String!) {
                 pages {
                     create(content: $content, description: $description, editor: $editor, isPublished: $isPublished,
-                          isPrivate: $isPrivate, locale: $locale, path: $path, privateNS: $privateNS,
+                          isPrivate: $isPrivate, locale: $locale, path: $path,
                           publishEndDate: $publishEndDate, publishStartDate: $publishStartDate, tags: $tags, title: $title) {
                         responseResult {
                             succeeded
@@ -441,10 +447,11 @@ class WikiJsClient:
                             contentType
                             isPublished
                             isPrivate
-                            privateNS
                             publishStartDate
                             publishEndDate
-                            tags
+                            tags {
+                                tag
+                            }
                             editor
                             createdAt
                             updatedAt
@@ -475,8 +482,6 @@ class WikiJsClient:
             "isPrivate": is_private
         }
 
-        if private_ns:
-            variables["privateNS"] = private_ns
         if locale:
             variables["locale"] = locale
         if tags:
@@ -542,12 +547,12 @@ class WikiJsClient:
         mutation = gql("""
             mutation UpdatePage($id: Int!, $content: String, $description: String, $editor: String,
                                $isPublished: Boolean, $isPrivate: Boolean, $locale: String,
-                               $privateNS: String, $publishEndDate: Date, $publishStartDate: Date,
+                               $publishEndDate: Date, $publishStartDate: Date,
                                $tags: [String], $title: String) {
                 pages {
                     update(id: $id, content: $content, description: $description, editor: $editor,
                           isPublished: $isPublished, isPrivate: $isPrivate, locale: $locale,
-                          privateNS: $privateNS, publishEndDate: $publishEndDate,
+                          publishEndDate: $publishEndDate,
                           publishStartDate: $publishStartDate, tags: $tags, title: $title) {
                         responseResult {
                             succeeded
@@ -564,10 +569,11 @@ class WikiJsClient:
                             contentType
                             isPublished
                             isPrivate
-                            privateNS
                             publishStartDate
                             publishEndDate
-                            tags
+                            tags {
+                                tag
+                            }
                             editor
                             createdAt
                             updatedAt
@@ -601,8 +607,6 @@ class WikiJsClient:
             variables["isPublished"] = is_published
         if is_private is not None:
             variables["isPrivate"] = is_private
-        if private_ns is not None:
-            variables["privateNS"] = private_ns
         if locale is not None:
             variables["locale"] = locale
         if tags is not None:
