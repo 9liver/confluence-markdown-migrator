@@ -438,7 +438,7 @@ class MarkdownConverter(MarkdownifyConverter):
                 data_row = '| ' + ' | '.join(cell.get_text(strip=True) for cell in cells) + ' |'
                 markdown_rows.append(data_row)
         
-        result = '\\n'.join(markdown_rows) + '\\n\\n'
+        result = '\n'.join(markdown_rows) + '\n\n'
         return result
     
     def convert_blockquote(self, el, text, parent_tags=None, **kwargs):
