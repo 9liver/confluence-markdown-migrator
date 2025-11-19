@@ -402,7 +402,7 @@ class WikiJsClient:
         """
         mutation = gql("""
             mutation CreatePage($content: String!, $description: String!, $editor: String!, $isPublished: Boolean!,
-                               $isPrivate: Boolean!, $locale: String, $path: String!,
+                               $isPrivate: Boolean!, $locale: String!, $path: String!,
                                $publishEndDate: Date, $publishStartDate: Date, $tags: [String], $title: String!) {
                 pages {
                     create(content: $content, description: $description, editor: $editor, isPublished: $isPublished,
@@ -431,16 +431,8 @@ class WikiJsClient:
                             editor
                             createdAt
                             updatedAt
-                            author {
-                                id
-                                name
-                                email
-                            }
-                            creator {
-                                id
-                                name
-                                email
-                            }
+                            authorId
+                            creatorId
                             locale
                         }
                     }
@@ -455,11 +447,10 @@ class WikiJsClient:
             "description": description,
             "editor": editor,
             "isPublished": is_published,
-            "isPrivate": is_private
+            "isPrivate": is_private,
+            "locale": locale or self.default_locale
         }
 
-        if locale:
-            variables["locale"] = locale
         if tags:
             variables["tags"] = tags
 
@@ -553,16 +544,8 @@ class WikiJsClient:
                             editor
                             createdAt
                             updatedAt
-                            author {
-                                id
-                                name
-                                email
-                            }
-                            creator {
-                                id
-                                name
-                                email
-                            }
+                            authorId
+                            creatorId
                             locale
                         }
                     }
