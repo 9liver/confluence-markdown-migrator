@@ -17,6 +17,45 @@ from .macro_handler import MacroHandler
 logger = logging.getLogger('confluence_markdown_migrator.converters.markdownconverter')
 
 
+class ListTypeMarkers:
+    """Helper class for converting numeric indices to list markers (a, b, c, i, ii, etc.)"""
+    
+    @staticmethod
+    def get_alpha_marker(index: int) -> str:
+        """Convert 0-based index to lowercase letter (0=a, 1=b, 2=c, etc.)"""
+        return chr(ord('a') + index)
+    
+    @staticmethod
+    def get_upper_alpha_marker(index: int) -> str:
+        """Convert 0-based index to uppercase letter (0=A, 1=B, 2=C, etc.)"""
+        return chr(ord('A') + index)
+    
+    @staticmethod
+    def get_roman_marker(index: int) -> str:
+        """Convert 0-based index to lowercase roman numeral (0=i, 1=ii, 2=iii, etc.)"""
+        return ListTypeMarkers._int_to_roman(index + 1).lower()
+    
+    @staticmethod
+    def get_upper_roman_marker(index: int) -> str:
+        """Convert 0-based index to uppercase roman numeral"""
+        return ListTypeMarkers._int_to_roman(index + 1)
+    
+    @staticmethod
+    def _int_to_roman(num: int) -> str:
+        """Convert integer to roman numeral"""
+        val = [1000, 900, 500, 400, 100, 90, 50, 40, 10, 9, 5, 4, 1]
+        syms = ["M", "CM", "D", "CD", "C", "XC", "L", "XL", "X", "IX", "V", "IV", "I"]
+        
+        roman_num = ''
+        i = 0
+        while num > 0:
+            for _ in range(num // val[i]):
+                roman_num += syms[i]
+                num -= val[i]
+            i += 1
+        return roman_num
+
+
 class MarkdownConverter(MarkdownifyConverter):
     """
     Main orchestrator for converting Confluence HTML to high-fidelity Markdown.
@@ -875,7 +914,23 @@ class MarkdownConverter(MarkdownifyConverter):
 
         # Determine bullet/number style
         if parent.name == 'ol':
-            bullet = f'{index + 1}.'
+            # Check for custom list type (alpha, roman, etc.)
+            list_type = parent.get('data-list-type')
+            if list_type:
+                # Use custom markers based on type
+                markers = ListTypeMarkers()
+                if list_type == 'lower-alpha':
+                    bullet = f'{markers.get_alpha_marker(index)}.'
+                elif list_type == 'upper-alpha':
+                    bullet = f'{markers.get_upper_alpha_marker(index)}.'
+                elif list_type == 'lower-roman':
+                    bullet = f'{markers.get_roman_marker(index)}.'
+                elif list_type == 'upper-roman':
+                    bullet = f'{markers.get_upper_roman_marker(index)}.'
+                else:
+                    bullet = f'{index + 1}.'
+            else:
+                bullet = f'{index + 1}.'
         else:
             bullet = '-'
 

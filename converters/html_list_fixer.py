@@ -7,6 +7,7 @@ incorrect code block placement.
 """
 
 import logging
+import re
 from bs4 import BeautifulSoup, Tag
 
 
@@ -29,6 +30,9 @@ class HtmlListFixer:
 
         # Move orphaned code blocks into list items
         self._fix_orphaned_code_blocks(soup)
+
+        # Preserve list style types (alpha, roman, etc.) from style attributes
+        self._preserve_list_style_types(soup)
 
         # Remove start attributes that interfere with markdown numbering
         self._remove_start_attributes(soup)
@@ -155,6 +159,33 @@ class HtmlListFixer:
                 if prev_li:
                     prev_li.append(element.extract())
                     self.logger.debug("Fixed orphaned code block in list")
+
+    def _preserve_list_style_types(self, soup: BeautifulSoup) -> None:
+        """
+        Convert CSS list-style-type attributes to data attributes for markdown conversion.
+        Supports: lower-alpha (a, b, c), upper-alpha (A, B, C), lower-roman (i, ii, iii), upper-roman (I, II, III)
+        """
+        for ol in soup.find_all('ol'):
+            style = ol.get('style', '')
+            if not style:
+                continue
+                
+            # Extract list-style-type from style attribute
+            style_type_match = re.search(r'list-style-type:\s*([^;]+)', style, re.IGNORECASE)
+            if style_type_match:
+                style_type = style_type_match.group(1).strip().lower()
+                self.logger.debug(f"Found list style type: {style_type}")
+                
+                # Map CSS list-style-type to our internal type
+                if 'lower-alpha' in style_type:
+                    ol['data-list-type'] = 'lower-alpha'
+                elif 'upper-alpha' in style_type:
+                    ol['data-list-type'] = 'upper-alpha'
+                elif 'lower-roman' in style_type:
+                    ol['data-list-type'] = 'lower-roman'
+                elif 'upper-roman' in style_type:
+                    ol['data-list-type'] = 'upper-roman'
+                # Note: We don't remove the style attribute as it might be needed for reference
 
     def _remove_start_attributes(self, soup: BeautifulSoup) -> None:
         """Remove start attributes from ordered lists that interfere with markdown numbering."""
