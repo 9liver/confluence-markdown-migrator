@@ -1,0 +1,23 @@
+<div id="main-content" class="wiki-content">
+<p>Diese Anleitung beschreibt, wie unsere Ansible-Umgebung für die Entwicklung und Tests lokal eingerichtet werden kann.</p>
+<ol>
+<li><p class="auto-cursor-target">Für diese Anleitung notwendige Pakete installieren</p>
+<div class="code panel pdl conf-macro output-block" style="border-width: 1px;" data-hasbody="true" data-macro-name="code">
+<div class="codeContent panelContent pdl">
+<pre class="syntaxhighlighter-pre" data-syntaxhighlighter-params="brush: bash; gutter: false; theme: RDark" data-theme="RDark">$ sudo apt update &amp;&amp; sudo apt install python3 python3-pip git</pre>
+</div></div></li>
+<li><p class="auto-cursor-target">Da die Ansible Version aus den offiziellen repos zu alt ist und einige module fehlen installieren wir <a href="https://docs.ansible.com/ansible/latest/installation_guide/intro_installation.html#pip-install" class="external-link" rel="nofollow">Ansible über pip</a></p>
+<ol>
+<li><p class="auto-cursor-target">Sofern Ansible bereits über die Paketverwaltung installiert wurde:<code><code> </code></code></p>
+<div class="code panel pdl conf-macro output-block" style="border-width: 1px;" data-hasbody="true" data-macro-name="code">
+<div class="codeContent panelContent pdl">
+<pre class="syntaxhighlighter-pre" data-syntaxhighlighter-params="brush: bash; gutter: false; theme: RDark" data-theme="RDark">$ sudo apt remove ansible</pre>
+</div></div></li>
+<li><p class="auto-cursor-target">Ansible installieren</p>
+<div class="code panel pdl conf-macro output-block" style="border-width: 1px;" data-hasbody="true" data-macro-name="code">
+<div class="codeContent panelContent pdl">
+<pre class="syntaxhighlighter-pre" data-syntaxhighlighter-params="brush: bash; gutter: false; theme: RDark" data-theme="RDark">$ python3 -m pip install --proxy http://127.0.0.1:3128 --user ansible</pre>
+</div></div></li>
+</ol></li>
+</ol>
+</div>
