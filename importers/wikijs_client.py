@@ -420,21 +420,6 @@ class WikiJsClient:
                             id
                             path
                             title
-                            description
-                            content
-                            contentType
-                            isPublished
-                            isPrivate
-                            publishStartDate
-                            publishEndDate
-                            tags {
-                                tag
-                            }
-                            createdAt
-                            updatedAt
-                            authorId
-                            creatorId
-                            locale
                         }
                     }
                 }
