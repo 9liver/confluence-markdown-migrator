@@ -51,35 +51,44 @@ def create_argument_parser() -> argparse.ArgumentParser:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  # Export to markdown files
+  # Export to markdown files (default)
   python migrate.py --config config.yaml
-  
+
   # Interactive mode with TUI
   python migrate.py --interactive
-  
+
   # Direct import to Wiki.js
   python migrate.py --export-target wikijs
-  
+
   # Direct import to BookStack
   python migrate.py --export-target bookstack
-  
+
   # Import to both wikis
   python migrate.py --export-target both_wikis
-  
+
   # Dry-run mode (preview)
   python migrate.py --dry-run --export-target wikijs
-  
+
   # Filter by spaces
   python migrate.py --spaces "ENG,HR,DOC"
-  
+
   # Single page migration
   python migrate.py --page-id 123456
-  
+
   # Date filtering
   python migrate.py --since-date 2024-01-01
-  
+
   # Verbose logging
   python migrate.py -vv
+
+  # Import from local markdown files to Wiki.js
+  python migrate.py --workflow import_from_markdown --export-target wikijs
+
+  # Import from local markdown files to BookStack
+  python migrate.py --workflow import_from_markdown --export-target bookstack
+
+  # Import to both wikis from local files
+  python migrate.py --workflow import_from_markdown --export-target both_wikis
         """
     )
     
@@ -143,9 +152,9 @@ Examples:
     
     parser.add_argument(
         '--workflow',
-        choices=['export_only', 'import_only', 'export_then_import'],
+        choices=['export_only', 'import_only', 'export_then_import', 'import_from_markdown'],
         default='export_only',
-        help='Migration workflow (default: export_only)'
+        help='Migration workflow: export_only (fetch and save to markdown), import_only (fetch and import to wiki), export_then_import (fetch, save, then import), import_from_markdown (read local files and import to wiki) (default: export_only)'
     )
     
     parser.add_argument(
@@ -201,28 +210,53 @@ def validate_configuration(config: dict, args: argparse.Namespace, logger: loggi
             except (ValueError, AttributeError):
                 logger.error(f"Invalid ISO date format: {args.since_date}")
                 return False
-        
+
         # Validate HTML export path if mode is html
         if args.mode == 'html':
             html_path = config.get('confluence', {}).get('html_export_path')
             if not html_path:
                 logger.error("HTML export path must be configured when using html mode")
                 return False
-            
+
             path = Path(html_path)
             if not path.exists() or not path.is_dir():
                 logger.error(f"HTML export path does not exist or is not a directory: {html_path}")
                 return False
-        
+
         # Validate space keys if provided
         if args.spaces:
             space_keys = [key.strip() for key in args.spaces.split(',') if key.strip()]
             if not space_keys:
                 logger.error("No valid space keys provided in --spaces argument")
                 return False
-        
+
+        # Validate import_from_markdown workflow
+        if args.workflow == 'import_from_markdown':
+            # Check that output_directory is configured and exists
+            export_config = config.get('export', {})
+            output_dir = export_config.get('output_directory', './confluence-export')
+            output_path = Path(output_dir)
+
+            if not output_path.exists():
+                logger.error(f"import_from_markdown workflow requires export directory to exist: {output_dir}")
+                return False
+
+            if not output_path.is_dir():
+                logger.error(f"Export path is not a directory: {output_dir}")
+                return False
+
+            # Check that export_target is a wiki target
+            if args.export_target not in ['wikijs', 'bookstack', 'both_wikis']:
+                logger.error(
+                    f"import_from_markdown workflow requires wiki target (wikijs, bookstack, both_wikis), "
+                    f"got '{args.export_target}'"
+                )
+                return False
+
+            logger.info(f"Importing from local markdown files in {output_dir}")
+
         return True
-        
+
     except Exception as e:
         logger.error(f"Configuration validation error: {str(e)}")
         return False
@@ -339,7 +373,7 @@ def _filter_tree_by_selection(tree: DocumentationTree, selected_page_ids: Set[st
 def run_migration(config: dict, args: argparse.Namespace, logger: logging.Logger) -> int:
     """Execute the complete migration pipeline."""
     logger.info("Starting migration pipeline")
-    
+
     # Extract settings
     mode = args.mode
     # Dry-run: use args.dry_run if provided, fall back to config, default to False
@@ -348,14 +382,53 @@ def run_migration(config: dict, args: argparse.Namespace, logger: logging.Logger
     page_id = args.page_id
     since_date = args.since_date
     export_target = args.export_target
-    
-    logger.info(f"Mode: {mode}, Dry-run: {dry_run}, Export target: {export_target}")
-    
+    workflow = args.workflow
+
+    logger.info(f"Mode: {mode}, Dry-run: {dry_run}, Export target: {export_target}, Workflow: {workflow}")
+
     try:
-        # Create fetcher
+        # Handle import_from_markdown workflow - skip fetch phase
+        if workflow == 'import_from_markdown':
+            logger.info("import_from_markdown workflow - skipping Confluence fetch")
+
+            # Create empty tree - orchestrator will load from markdown files
+            tree = DocumentationTree()
+
+            # Run migration orchestrator
+            logger.info("Creating migration orchestrator")
+            logger.info(f'Workflow: {workflow}, Target: {export_target}')
+            orchestrator = MigrationOrchestrator(config, tree, logger, workflow=workflow)
+
+            logger.info("Starting migration orchestration")
+            checkpoint_path = args.checkpoint_path or config.get('migration', {}).get('checkpoint_path')
+            report = orchestrator.orchestrate_migration(tree, checkpoint_path=checkpoint_path)
+
+            # Display report
+            report_generator = MigrationReport(logger)
+            console_report = report_generator.format_console_report(report)
+            print("\n" + console_report)
+
+            # Export JSON report
+            report_path = config.get('migration', {}).get('report_path', 'migration_report.json')
+            try:
+                report_generator.export_json_report(report, report_path)
+                logger.info(f"Migration report saved to {report_path}")
+            except Exception as e:
+                logger.warning(f"Failed to export JSON report: {str(e)}")
+
+            # Check for errors
+            errors = report.get('summary', {}).get('total_errors', 0)
+            if errors > 0:
+                logger.warning(f"Migration completed with {errors} errors")
+                return 1
+            else:
+                logger.info("Migration completed successfully")
+                return 0
+
+        # Standard workflow - Create fetcher
         logger.debug("Creating fetcher")
         fetcher = FetcherFactory.create_fetcher(config, logger)
-        
+
         # Test connectivity (API mode only)
         if mode == 'api':
             logger.info("Testing Confluence connectivity")

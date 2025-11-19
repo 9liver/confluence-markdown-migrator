@@ -103,23 +103,24 @@ python migrate.py -vv  # DEBUG level
 
 ### Migration Workflows
 
-The tool supports three distinct workflows:
+The tool supports four distinct workflows:
 
-**1. Export to Markdown Files Only**
+**1. Export to Markdown Files Only (export_only)**
 ```bash
-python migrate.py --export-target markdown_files
+python migrate.py --workflow export_only
 ```
 - Fetches content from Confluence
 - Converts HTML to Markdown
 - Exports to local filesystem with attachments
 - Generates README.md index files
+- Saves comprehensive YAML frontmatter for reconstruction
 - Useful for: version control, offline review, custom processing
 
-**2. Direct Import to Wiki**
+**2. Direct Import to Wiki (import_only)**
 ```bash
-python migrate.py --export-target wikijs
+python migrate.py --workflow import_only --export-target wikijs
 # or
-python migrate.py --export-target bookstack
+python migrate.py --workflow import_only --export-target bookstack
 ```
 - Fetches content from Confluence
 - Converts HTML to Markdown
@@ -128,7 +129,155 @@ python migrate.py --export-target bookstack
 - No local files created (except logs/reports)
 - Useful for: one-time migrations, automated syncs
 
-**3. Import to Both Wikis**
+**3. Export Then Import (export_then_import)**
+```bash
+python migrate.py --workflow export_then_import --export-target wikijs
+```
+- Fetches content from Confluence
+- Converts HTML to Markdown
+- Exports to local filesystem with attachments
+- Then imports to target wiki
+- Useful for: backup before import, reviewing content
+
+**4. Import from Local Markdown (import_from_markdown)**
+```bash
+python migrate.py --workflow import_from_markdown --export-target wikijs
+# or
+python migrate.py --workflow import_from_markdown --export-target bookstack
+# or
+python migrate.py --workflow import_from_markdown --export-target both_wikis
+```
+- Reads local markdown files from output_directory
+- Parses YAML frontmatter to reconstruct hierarchy
+- Imports to target wiki(s) based on metadata
+- No Confluence connection needed
+- Useful for: split workflows, offline import, sharing exports
+
+## Split Export and Import
+
+The tool supports completely independent export and import workflows, allowing you to:
+
+1. Export from Confluence once
+2. Review/edit markdown files locally
+3. Import to multiple wikis at different times
+4. Share markdown files between teams
+5. Import without Confluence access
+
+### Step 1: Export from Confluence
+
+```bash
+python migrate.py --workflow export_only --spaces "DOC,ENG"
+```
+
+This fetches content from Confluence, converts to markdown, and saves locally with comprehensive metadata in YAML frontmatter.
+
+### Step 2: Import to Wiki
+
+```bash
+python migrate.py --workflow import_from_markdown --export-target wikijs
+```
+
+This reads local markdown files and imports to Wiki.js based on frontmatter metadata. No Confluence connection needed.
+
+### Benefits
+
+- **Portability**: Share markdown files between teams/systems
+- **Review**: Inspect/edit markdown before import
+- **Flexibility**: Export once, import to multiple wikis
+- **Offline**: Import without Confluence access
+
+## Markdown Frontmatter
+
+Exported markdown files include comprehensive YAML frontmatter that enables reconstruction of hierarchy and metadata during import.
+
+### Example Frontmatter
+
+```yaml
+---
+confluence_page_id: '123456'
+title: Installation Guide
+space_key: DOC
+space_name: Documentation
+parent_id: '123455'
+parent_chain:
+  - '123450'
+  - '123455'
+parent_titles:
+  - Getting Started
+  - Setup
+hierarchy_depth: 2
+confluence_url: https://confluence.example.com/pages/123456
+relative_path: getting-started/setup/installation-guide.md
+filesystem_depth: 2
+last_modified: '2024-01-15T10:30:00Z'
+author: john.doe
+labels:
+  - installation
+  - guide
+version: 5
+attachments:
+  - id: att123
+    title: diagram.png
+    media_type: image/png
+    file_size: 102400
+    local_path: attachments/diagram.png
+    checksum: sha256:abc123...
+attachment_count: 1
+conversion_status: success
+conversion_warnings: []
+macros_converted:
+  - info
+  - code
+macros_failed: []
+content_checksum: sha256:def456...
+markdown_checksum: sha256:ghi789...
+integrity_status: verified
+export_timestamp: '2024-01-20T14:00:00Z'
+---
+```
+
+### Frontmatter Fields
+
+| Field | Description |
+|-------|-------------|
+| `confluence_page_id` | Original Confluence page ID |
+| `title` | Page title |
+| `space_key` | Confluence space key |
+| `space_name` | Space display name |
+| `parent_id` | Direct parent page ID |
+| `parent_chain` | List of ancestor IDs from root to parent |
+| `parent_titles` | List of ancestor titles |
+| `hierarchy_depth` | Distance from space root (0 for top-level) |
+| `confluence_url` | Original Confluence URL |
+| `relative_path` | Path from space root in export |
+| `filesystem_depth` | Depth in exported directory structure |
+| `attachments` | List of attachment metadata |
+| `conversion_status` | success, partial, or failed |
+| `macros_converted` | List of successfully converted macros |
+| `export_timestamp` | When the export was created |
+
+### How Frontmatter Enables Import
+
+The `import_from_markdown` workflow uses frontmatter to:
+
+1. **Reconstruct Hierarchy**: Uses `parent_id` and `parent_chain` to rebuild parent-child relationships
+2. **Group by Space**: Uses `space_key` to organize pages into spaces
+3. **Resolve Attachments**: Uses `attachments` metadata to find local files
+4. **Preserve Metadata**: Transfers labels, version, and conversion info to target wiki
+
+### Editing Frontmatter
+
+You can edit frontmatter before import to:
+
+- Change page titles
+- Reassign parent pages
+- Modify labels
+- Update paths
+
+Just ensure required fields (`confluence_page_id`, `title`, `space_key`) remain present.
+
+### Import to Both Wikis
+
 ```bash
 python migrate.py --export-target both_wikis
 ```

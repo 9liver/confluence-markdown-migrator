@@ -88,13 +88,27 @@ migration:
   # - "api": Fetch via Confluence REST API
   # - "html": Parse from Confluence HTML export files
   mode: "api"
-  
+
+  # Migration workflow mode (default: "export_only")
+  # Options:
+  #   - "export_only": Fetch from Confluence, convert, export to markdown files
+  #   - "import_only": Fetch from Confluence, convert, import directly to wiki (no local files)
+  #   - "export_then_import": Fetch, convert, export to files, then import to wiki
+  #   - "import_from_markdown": Read local markdown files and import to wiki (no Confluence fetch)
+  #
+  # Example workflows:
+  #   1. First export: python migrate.py --workflow export_only
+  #   2. Then import: python migrate.py --workflow import_from_markdown --export-target wikijs
+  workflow: "export_only"
+
   # Export target destination (default: "markdown_files")
   # Options:
   #   - "markdown_files": Export to local markdown files only
   #   - "wikijs": Import directly to Wiki.js
   #   - "bookstack": Import directly to BookStack
   #   - "both_wikis": Import to both Wiki.js and BookStack
+  #
+  # Note: import_from_markdown workflow requires wiki target (wikijs, bookstack, or both_wikis)
   export_target: "markdown_files"
   
   # Optional: List of space keys to migrate (empty = all spaces)
@@ -124,8 +138,17 @@ migration:
 # Export settings for markdown files mode
 export:
   # Output directory for exported markdown files (default: "./confluence-export")
+  # This directory is also used by import_from_markdown workflow to read files
   output_directory: "./confluence-export"
-  
+
+  # Markdown files include comprehensive YAML frontmatter with:
+  # - Confluence page ID, title, space info
+  # - Parent chain and hierarchy depth for reconstruction
+  # - Attachment metadata with checksums
+  # - Conversion status and warnings
+  # - Content checksums for integrity verification
+  # This enables import_from_markdown workflow to work independently
+
   # Markdown flavor for conversion (default: "gfm")
   # Options:
   #   - "commonmark": Standard CommonMark

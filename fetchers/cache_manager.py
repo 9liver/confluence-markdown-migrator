@@ -4,6 +4,7 @@ import hashlib
 import json
 import logging
 import os
+import tempfile
 import time
 from datetime import datetime, timedelta
 from enum import Enum
@@ -43,18 +44,20 @@ class CacheManager:
         self.validate_with_headers = cache_config.get('validate_with_headers', True)
         self.cache_attachments = cache_config.get('cache_attachments', True)
         self.verify_checksums = cache_config.get('verify_checksums', True)
-        
-        # Statistics tracking
+
+        # Statistics tracking - initialize with defaults
         self.stats = {
             'hits': 0,
             'misses': 0,
             'validations': 0,
             'invalidations': 0
         }
-        
+
         # Ensure cache directory exists
         if self.enabled:
             os.makedirs(self.cache_dir, exist_ok=True)
+            # Load persistent stats if available
+            self._load_persistent_stats()
             logger.info(f"Cache enabled: mode={self.mode.value}, directory={self.cache_dir}, TTL={self.ttl_seconds}s")
         else:
             logger.debug("Cache disabled")
@@ -362,19 +365,19 @@ class CacheManager:
     def clear(self, pattern: Optional[str] = None) -> int:
         """
         Clear cache entries matching pattern.
-        
+
         Args:
             pattern: Optional pattern to match cache keys (supports wildcards)
                     If None, clears all cache entries
-                    
+
         Returns:
             Number of entries cleared
         """
         if self.mode == CacheMode.DISABLE or not os.path.exists(self.cache_dir):
             return 0
-        
+
         cleared = 0
-        
+
         try:
             for filename in os.listdir(self.cache_dir):
                 if filename.endswith('.json') or filename.endswith('.bin'):
@@ -383,7 +386,7 @@ class CacheManager:
                         cache_key = filename[:-5]
                     else:  # .bin
                         cache_key = filename[:-4]
-                    
+
                     if pattern is None or self._match_pattern(cache_key, pattern):
                         file_path = os.path.join(self.cache_dir, filename)
                         try:
@@ -392,12 +395,66 @@ class CacheManager:
                             logger.debug(f"Cleared cache: {cache_key}")
                         except OSError as e:
                             logger.warning(f"Failed to clear cache file {file_path}: {str(e)}")
-            
+
         except OSError as e:
             logger.error(f"Failed to list cache directory: {str(e)}")
-        
+
         self.reset_stats()
         logger.info(f"Cleared {cleared} cache entries" + (f" matching '{pattern}'" if pattern else ""))
+        return cleared
+
+    def clear_expired(self) -> int:
+        """
+        Clear only expired cache entries.
+
+        Returns:
+            Number of expired entries cleared
+        """
+        if self.mode == CacheMode.DISABLE or not os.path.exists(self.cache_dir):
+            return 0
+
+        cleared = 0
+
+        try:
+            for filename in os.listdir(self.cache_dir):
+                if filename.endswith('.json') and not filename.endswith('_meta.json'):
+                    file_path = os.path.join(self.cache_dir, filename)
+
+                    try:
+                        with open(file_path, 'r', encoding='utf-8') as f:
+                            cache_entry = json.load(f)
+
+                        cached_time = datetime.fromisoformat(cache_entry['timestamp'])
+                        ttl = cache_entry.get('ttl_seconds', self.ttl_seconds)
+                        age = datetime.utcnow() - cached_time
+
+                        if age.total_seconds() > ttl:
+                            os.remove(file_path)
+                            cleared += 1
+                            cache_key = filename[:-5]
+                            logger.debug(f"Cleared expired cache: {cache_key}")
+
+                            # Also remove associated binary file if exists
+                            bin_file = file_path.replace('.json', '.bin')
+                            if os.path.exists(bin_file):
+                                os.remove(bin_file)
+                                cleared += 1
+
+                    except (json.JSONDecodeError, KeyError, OSError) as e:
+                        # Remove corrupted cache file
+                        try:
+                            os.remove(file_path)
+                            cleared += 1
+                            logger.debug(f"Cleared corrupted cache file: {filename}")
+                        except OSError:
+                            pass
+
+        except OSError as e:
+            logger.error(f"Failed to list cache directory: {str(e)}")
+
+        if cleared > 0:
+            logger.info(f"Cleared {cleared} expired cache entries")
+
         return cleared
     
     def get_stats(self) -> Dict[str, Any]:
@@ -460,6 +517,9 @@ class CacheManager:
         total_requests = self.stats['hits'] + self.stats['misses']
         hit_rate = self.stats['hits'] / total_requests if total_requests > 0 else 0.0
         
+        # Persist stats to disk
+        self._save_persistent_stats()
+
         return {
             'enabled': True,
             'mode': self.mode.value,
@@ -478,13 +538,15 @@ class CacheManager:
         }
     
     def reset_stats(self) -> None:
-        """Reset statistics counters."""
+        """Reset statistics counters and clear persistent stats file."""
         self.stats = {
             'hits': 0,
             'misses': 0,
             'validations': 0,
             'invalidations': 0
         }
+        # Also clear persistent stats
+        self._save_persistent_stats()
     
     def _get_cache_file_path(self, key: str) -> str:
         """Get file path for cache key."""
@@ -537,17 +599,106 @@ class CacheManager:
     def _match_pattern(self, key: str, pattern: str) -> bool:
         """
         Check if key matches pattern with wildcard support.
-        
+
         Args:
             key: Cache key to check
             pattern: Pattern with * and ? wildcards
-            
+
         Returns:
             True if matches
         """
         import fnmatch
         return fnmatch.fnmatch(key, pattern)
-    
+
+    def _get_stats_file_path(self) -> str:
+        """Get the path to the persistent stats file."""
+        return os.path.join(self.cache_dir, 'stats.json')
+
+    def _load_persistent_stats(self) -> None:
+        """
+        Load persistent statistics from disk and merge into current stats.
+
+        Reads stats.json from cache_dir if it exists and merges the counters
+        into self.stats. This allows statistics to accumulate across runs.
+        """
+        stats_file = self._get_stats_file_path()
+
+        if not os.path.exists(stats_file):
+            logger.debug("No persistent stats file found, starting fresh")
+            return
+
+        try:
+            with open(stats_file, 'r', encoding='utf-8') as f:
+                saved_stats = json.load(f)
+
+            # Merge saved stats into current stats
+            for key in ['hits', 'misses', 'validations', 'invalidations']:
+                if key in saved_stats:
+                    self.stats[key] = saved_stats[key]
+
+            logger.debug(f"Loaded persistent stats: {self.stats}")
+
+        except (json.JSONDecodeError, OSError) as e:
+            logger.warning(f"Failed to load persistent stats: {e}")
+            # Continue with default stats
+
+    def _save_persistent_stats(self) -> bool:
+        """
+        Save current statistics to disk using atomic write.
+
+        Uses a write-to-temp-then-rename pattern to ensure robustness
+        against concurrent runs or interrupted writes.
+
+        Returns:
+            True if successful, False otherwise
+        """
+        if self.mode == CacheMode.DISABLE:
+            return False
+
+        stats_file = self._get_stats_file_path()
+
+        try:
+            # Write to temporary file first
+            fd, temp_path = tempfile.mkstemp(
+                dir=self.cache_dir,
+                prefix='stats_',
+                suffix='.tmp'
+            )
+
+            try:
+                with os.fdopen(fd, 'w', encoding='utf-8') as f:
+                    json.dump(self.stats, f, indent=2)
+
+                # Atomic rename
+                os.replace(temp_path, stats_file)
+                logger.debug(f"Saved persistent stats to {stats_file}")
+                return True
+
+            except Exception:
+                # Clean up temp file on error
+                try:
+                    os.unlink(temp_path)
+                except OSError:
+                    pass
+                raise
+
+        except Exception as e:
+            logger.warning(f"Failed to save persistent stats: {e}")
+            return False
+
+    def flush_stats(self) -> bool:
+        """
+        Flush current statistics to persistent storage.
+
+        Call this method to ensure statistics are saved to disk.
+        This is automatically called by get_stats() but can be called
+        explicitly when needed.
+
+        Returns:
+            True if successful, False otherwise
+        """
+        return self._save_persistent_stats()
+
     @staticmethod
     def generate_cache_key(endpoint: str, **params) -> str:
         """

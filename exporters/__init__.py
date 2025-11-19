@@ -30,13 +30,15 @@ Configuration Referenced:
 """
 
 from .markdown_exporter import MarkdownExporter
+from .markdown_reader import MarkdownReader
 from .attachment_manager import AttachmentManager
 from .link_rewriter import LinkRewriter
 from .index_generator import IndexGenerator
 
 __all__ = [
     'MarkdownExporter',
-    'AttachmentManager', 
+    'MarkdownReader',
+    'AttachmentManager',
     'LinkRewriter',
     'IndexGenerator'
 ]

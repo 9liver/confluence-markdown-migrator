@@ -1,11 +1,14 @@
 """Main markdown exporter orchestrator for Confluence to Markdown migration."""
 
+import hashlib
 import logging
 import os
 import re
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
+
+import yaml
 
 from models import DocumentationTree, ConfluenceSpace, ConfluencePage
 from logger import ProgressTracker
@@ -50,6 +53,7 @@ class MarkdownExporter:
         # Initialize statistics
         self.stats = {
             'total_pages_exported': 0,
+            'total_pages_unchanged': 0,
             'total_attachments_saved': 0,
             'total_attachments_skipped': 0,
             'total_attachments_failed': 0,
@@ -149,10 +153,11 @@ class MarkdownExporter:
         
         # Track exported pages to avoid duplicates
         exported_page_ids = set()
-        
+
         # Initialize space stats
         space_stats = {
             'pages_exported': 0,
+            'pages_unchanged': 0,
             'attachments_saved': 0,
             'attachments_skipped': 0,
             'attachments_failed': 0,
@@ -186,6 +191,7 @@ class MarkdownExporter:
                 
                 # Update space stats
                 space_stats['pages_exported'] += page_stats['pages_exported']
+                space_stats['pages_unchanged'] += page_stats.get('pages_unchanged', 0)
                 space_stats['attachments_saved'] += page_stats['attachments_saved']
                 space_stats['attachments_skipped'] += page_stats['attachments_skipped']
                 space_stats['attachments_failed'] += page_stats['attachments_failed']
@@ -222,6 +228,7 @@ class MarkdownExporter:
         
         # Update global stats
         self.stats['total_pages_exported'] += space_stats['pages_exported']
+        self.stats['total_pages_unchanged'] += space_stats['pages_unchanged']
         self.stats['total_attachments_saved'] += space_stats['attachments_saved']
         self.stats['total_attachments_skipped'] += space_stats['attachments_skipped']
         self.stats['total_attachments_failed'] += space_stats['attachments_failed']
@@ -408,12 +415,13 @@ class MarkdownExporter:
         """
         page_stats = {
             'pages_exported': 0,
+            'pages_unchanged': 0,
             'attachments_saved': 0,
             'attachments_skipped': 0,
             'attachments_failed': 0,
             'errors': []
         }
-        
+
         # Calculate page directory based on parent chain
         page_dir, page_file = self._get_page_path(page, space_dir, space)
         
@@ -468,13 +476,39 @@ class MarkdownExporter:
                 attachment_manager=attachment_manager,
                 page_depth=page_depth  # Use computed depth for correct relative paths
             )
-            
-            # Generate frontmatter
-            frontmatter = self._generate_frontmatter(page)
+
+            # Calculate relative path for frontmatter
+            try:
+                relative_path = str(page_file.relative_to(space_dir))
+            except ValueError:
+                relative_path = page_file.name
+
+            # Generate frontmatter with comprehensive metadata
+            frontmatter = self._generate_frontmatter(
+                page=page,
+                space=space,
+                relative_path=relative_path,
+                filesystem_depth=page_depth
+            )
             
             # Write markdown file with comprehensive error handling
             full_content = f"{frontmatter}\n\n{rewritten_markdown}"
             try:
+                # Check if file exists and content is unchanged
+                if page_file.exists():
+                    try:
+                        existing_content = page_file.read_text(encoding='utf-8')
+                        if existing_content == full_content:
+                            # Content is byte-identical, skip writing
+                            self.logger.debug(
+                                f"Markdown unchanged for page '{page.title}' (ID: {page.id}), skipping write"
+                            )
+                            page_stats['pages_unchanged'] += 1
+                            return page_stats
+                    except Exception as e:
+                        # If we can't read existing file, proceed with write
+                        self.logger.debug(f"Could not read existing file {page_file}: {e}, proceeding with write")
+
                 page_file.write_text(full_content, encoding='utf-8')
                 page_stats['pages_exported'] += 1
                 self.logger.debug(f"Successfully wrote {len(full_content)} bytes to {page_file}")
@@ -516,46 +550,152 @@ class MarkdownExporter:
         
         return page_stats
     
-    def _generate_frontmatter(self, page: ConfluencePage) -> str:
-        """Generate YAML frontmatter for markdown file with Confluence metadata."""
-        lines = ["---"]
-        
+    def _generate_frontmatter(
+        self,
+        page: ConfluencePage,
+        space: Optional[ConfluenceSpace] = None,
+        relative_path: Optional[str] = None,
+        filesystem_depth: int = 0
+    ) -> str:
+        """
+        Generate comprehensive YAML frontmatter for markdown file with Confluence metadata.
+
+        Args:
+            page: ConfluencePage instance
+            space: ConfluenceSpace instance for parent chain traversal
+            relative_path: Relative path from space root
+            filesystem_depth: Depth in exported filesystem structure
+
+        Returns:
+            YAML frontmatter string
+        """
+        frontmatter = {}
+
         # Core metadata
-        lines.append(f"confluence_page_id: {page.id}")
-        lines.append(f"title: {page.title}")
-        lines.append(f"space_key: {page.space_key}")
-        
+        frontmatter['confluence_page_id'] = page.id
+        frontmatter['title'] = page.title
+        frontmatter['space_key'] = page.space_key
+
+        # Space name if available
+        if space:
+            frontmatter['space_name'] = space.name
+
+        # Parent chain information for hierarchy reconstruction
+        parent_id = page.parent_id
+        parent_chain = []
+        parent_titles = []
+
+        if space and parent_id:
+            frontmatter['parent_id'] = parent_id
+
+            # Build parent chain by traversing up
+            current_parent_id = parent_id
+            while current_parent_id:
+                parent_page = space.get_page_by_id(current_parent_id)
+                if parent_page:
+                    parent_chain.insert(0, parent_page.id)
+                    parent_titles.insert(0, parent_page.title)
+                    current_parent_id = parent_page.parent_id
+                else:
+                    break
+
+            if parent_chain:
+                frontmatter['parent_chain'] = parent_chain
+                frontmatter['parent_titles'] = parent_titles
+
+        # Hierarchy depth (distance from root)
+        hierarchy_depth = len(parent_chain)
+        frontmatter['hierarchy_depth'] = hierarchy_depth
+
+        # Path reconstruction metadata
+        if page.url:
+            frontmatter['confluence_url'] = page.url
+
+        if relative_path:
+            frontmatter['relative_path'] = relative_path
+
+        frontmatter['filesystem_depth'] = filesystem_depth
+
         # Last modified
         last_modified = page.metadata.get("last_modified")
         if last_modified:
-            lines.append(f"last_modified: {last_modified}")
-        
+            frontmatter['last_modified'] = last_modified
+
         # Author
         author = page.metadata.get("author")
         if author:
-            lines.append(f"author: {author}")
-        
+            frontmatter['author'] = author
+
         # Labels
         labels = page.metadata.get("labels", [])
         if labels:
-            labels_str = ", ".join(labels)
-            lines.append(f"labels: [{labels_str}]")
-        
+            frontmatter['labels'] = labels
+
         # Version
-        version = page.metadata.get("version", 1)
-        lines.append(f"version: {version}")
-        
-        # Conversion status
-        conversion_status = page.conversion_metadata.get("conversion_status", "pending")
-        lines.append(f"conversion_status: {conversion_status}")
-        
-        # Attachments count
+        frontmatter['version'] = page.metadata.get("version", 1)
+
+        # Attachment metadata
         if page.attachments:
-            lines.append(f"attachments_count: {len(page.attachments)}")
-        
-        lines.append("---")
-        
-        return "\n".join(lines)
+            attachments_list = []
+            for att in page.attachments:
+                att_data = {
+                    'id': att.id,
+                    'title': att.title,
+                    'media_type': att.media_type,
+                    'file_size': att.file_size
+                }
+                if att.local_path:
+                    att_data['local_path'] = att.local_path
+                if att.content_checksum:
+                    att_data['checksum'] = att.content_checksum
+                attachments_list.append(att_data)
+
+            frontmatter['attachments'] = attachments_list
+            frontmatter['attachment_count'] = len(page.attachments)
+        else:
+            frontmatter['attachment_count'] = 0
+
+        # Conversion metadata
+        conversion_status = page.conversion_metadata.get("conversion_status", "pending")
+        frontmatter['conversion_status'] = conversion_status
+
+        conversion_warnings = page.conversion_metadata.get("conversion_warnings", [])
+        if conversion_warnings:
+            frontmatter['conversion_warnings'] = conversion_warnings
+
+        macros_converted = page.conversion_metadata.get("macros_converted", [])
+        if macros_converted:
+            frontmatter['macros_converted'] = macros_converted
+
+        macros_failed = page.conversion_metadata.get("macros_failed", [])
+        if macros_failed:
+            frontmatter['macros_failed'] = macros_failed
+
+        # Integrity metadata
+        content_checksum = page.metadata.get("content_checksum")
+        if content_checksum:
+            frontmatter['content_checksum'] = content_checksum
+
+        markdown_checksum = page.conversion_metadata.get("markdown_checksum")
+        if markdown_checksum:
+            frontmatter['markdown_checksum'] = markdown_checksum
+
+        if page.integrity_status and page.integrity_status != 'pending':
+            frontmatter['integrity_status'] = page.integrity_status
+
+        # Export timestamp
+        frontmatter['export_timestamp'] = datetime.utcnow().isoformat() + 'Z'
+
+        # Use yaml.dump for proper escaping and formatting
+        yaml_str = yaml.dump(
+            frontmatter,
+            default_flow_style=False,
+            allow_unicode=True,
+            sort_keys=False,
+            width=1000  # Prevent line wrapping
+        )
+
+        return f"---\n{yaml_str}---"
     def _get_page_path(self, page: ConfluencePage, space_dir: Path, space: ConfluenceSpace) -> Tuple[Path, Path]:
         """
         Calculate page directory and file path based on parent chain.
@@ -648,6 +788,8 @@ class MarkdownExporter:
         self.logger.info("=" * 60)
         self.logger.info(f"Spaces processed: {self.stats['spaces_processed']}")
         self.logger.info(f"Pages exported: {self.stats['total_pages_exported']}")
+        if self.stats['total_pages_unchanged'] > 0:
+            self.logger.info(f"Pages unchanged: {self.stats['total_pages_unchanged']}")
         self.logger.info(f"Attachments saved: {self.stats['total_attachments_saved']}")
         self.logger.info(f"Attachments skipped: {self.stats['total_attachments_skipped']}")
         self.logger.info(f"Attachments failed: {self.stats['total_attachments_failed']}")

@@ -20,7 +20,7 @@ except ImportError:
 
 from models import DocumentationTree, ConfluencePage
 from converters import convert_page
-from exporters import MarkdownExporter
+from exporters import MarkdownExporter, MarkdownReader
 from importers import WikiJsImporter, BookStackImporter
 from logger import log_section, ProgressTracker
 from orchestrator.migration_report import MigrationReport
@@ -35,35 +35,36 @@ class MigrationOrchestrator:
     def __init__(self, config: Dict[str, Any], tree, logger: Optional[logging.Logger] = None, workflow: Optional[str] = None):
         """
         Initialize migration orchestrator.
-        
+
         Args:
             config: Configuration dictionary
             tree: DocumentationTree with Confluence content
             logger: Optional logger instance
-            workflow: Optional workflow mode ('export_only', 'import_only', 'export_then_import')
+            workflow: Optional workflow mode ('export_only', 'import_only', 'export_then_import', 'import_from_markdown')
         """
         self.config = config
         self.tree = tree
         self.logger = logger or logging.getLogger(__name__)
-        
+
         # Determine export target
         import_target = config.get('migration', {}).get('export_target', 'markdown_files')
         self.export_target = import_target
-        
+
         # Set workflow mode
         self.workflow = workflow or 'export_only'
-        
+
         # Initialize component references (created on-demand)
         self.converter = None
         self.exporter = None
+        self.markdown_reader = None
         self.wikijs_importer = None
         self.bookstack_importer = None
         self.report_generator = None
         self.integrity_verifier = None
-        
+
         # Extract integrity verification settings
         self.verify_integrity = config.get('advanced', {}).get('integrity_verification', {}).get('enabled', False)
-        
+
         self.logger.info(f"MigrationOrchestrator initialized with workflow: {self.workflow}, target: {self.export_target}, verify_integrity: {self.verify_integrity}")
     
     def orchestrate_migration(self, tree: DocumentationTree, existing_phase_stats: Optional[Dict[str, Any]] = None, checkpoint_path: Optional[str] = None) -> Dict[str, Any]:
@@ -83,14 +84,48 @@ class MigrationOrchestrator:
         
         phase_stats = {}
         existing_stats = existing_phase_stats or {}
-        
+
         try:
-            # Phase 1.5: Integrity Verification (if enabled and not resumed)
+            # Handle import_from_markdown workflow - skip fetch/convert phases
+            if self.workflow == 'import_from_markdown':
+                self.logger.info("Executing import_from_markdown workflow - skipping fetch and conversion phases")
+
+                # Load tree from markdown files
+                phase_stats['markdown_import'] = self._execute_markdown_import()
+                if phase_stats['markdown_import'].get('failed'):
+                    raise Exception(f"Markdown import failed: {phase_stats['markdown_import'].get('error')}")
+
+                # Get the loaded tree
+                tree = phase_stats['markdown_import'].get('tree')
+                if not tree:
+                    raise Exception("No tree loaded from markdown import")
+
+                # Skip to wiki import phase
+                if self.export_target == 'wikijs':
+                    phase_stats['wikijs_import'] = self._execute_wikijs_import(tree)
+                elif self.export_target == 'bookstack':
+                    phase_stats['bookstack_import'] = self._execute_bookstack_import(tree)
+                elif self.export_target == 'both_wikis':
+                    phase_stats['wikijs_import'] = self._execute_wikijs_import(tree)
+                    phase_stats['bookstack_import'] = self._execute_bookstack_import(tree)
+                else:
+                    self.logger.warning(
+                        f"import_from_markdown workflow requires wiki target, got '{self.export_target}'"
+                    )
+
+                # Calculate duration and generate report
+                migration_duration = time.time() - start_time
+                self.logger.info("Generating migration report")
+                report = self._generate_report(tree, phase_stats, migration_duration)
+                self.logger.info(f"Migration orchestration complete in {migration_duration:.2f}s")
+                return report
+
+            # Standard workflow - Phase 1.5: Integrity Verification (if enabled and not resumed)
             if self.verify_integrity and (not existing_stats or 'integrity_verification' not in existing_stats):
                 self.logger.info("Executing Phase 1.5: Integrity Verification")
                 verification_report = self._execute_integrity_verification(tree)
                 phase_stats['integrity_verification'] = verification_report
-                
+
                 # Save checkpoint after verification
                 if checkpoint_path:
                     self._save_state(tree, phase_stats, checkpoint_path)
@@ -102,7 +137,7 @@ class MigrationOrchestrator:
             else:
                 self.logger.info("Integrity verification disabled")
                 phase_stats['integrity_verification'] = {'enabled': False}
-            
+
             # Phase 1: Content Conversion
             if existing_stats and 'content_conversion' in existing_stats:
                 self.logger.info("Skipping content conversion (resumed)")
@@ -335,25 +370,89 @@ class MigrationOrchestrator:
             # Export tree
             self.logger.info("Exporting documentation tree to markdown files")
             stats = self.exporter.export_tree(tree)
-            
-            pages_exported = stats.get('pages_exported', 0)
-            attachments_downloaded = stats.get('attachments_downloaded', 0)
-            
+
+            pages_exported = stats.get('total_pages_exported', 0)
+            attachments_saved = stats.get('total_attachments_saved', 0)
+
             self.logger.info(
                 f"Phase 2a complete: {pages_exported} pages exported, "
-                f"{attachments_downloaded} attachments downloaded"
+                f"{attachments_saved} attachments saved"
             )
             
             return stats
-            
+
         except Exception as e:
             self.logger.error(f"Markdown export failed: {str(e)}", exc_info=True)
             return {
                 'failed': True,
                 'error': str(e),
-                'pages_exported': 0
+                'total_pages_exported': 0,
+                'total_attachments_saved': 0
             }
-    
+
+    def _execute_markdown_import(self) -> Dict[str, Any]:
+        """
+        Execute markdown import: Read local markdown files and reconstruct DocumentationTree.
+
+        Returns:
+            Import statistics dictionary with 'tree' key containing loaded DocumentationTree
+        """
+        log_section("Phase: Markdown Import")
+
+        try:
+            # Get export directory from config
+            export_config = self.config.get('export', {})
+            output_dir = export_config.get('output_directory', './confluence-export')
+            export_dir = Path(output_dir)
+
+            if not export_dir.exists():
+                raise ValueError(f"Export directory does not exist: {export_dir}")
+
+            if not export_dir.is_dir():
+                raise ValueError(f"Export path is not a directory: {export_dir}")
+
+            # Create markdown reader
+            self.logger.info(f"Creating MarkdownReader for {export_dir}")
+            self.markdown_reader = MarkdownReader(self.config, self.logger)
+
+            # Read and reconstruct tree
+            self.logger.info("Reading markdown files and reconstructing DocumentationTree")
+            tree = self.markdown_reader.read_export_directory(export_dir)
+
+            # Get reader stats
+            reader_stats = self.markdown_reader.get_stats()
+
+            # Build result
+            stats = {
+                'tree': tree,
+                'export_directory': str(export_dir),
+                'files_scanned': reader_stats.get('files_scanned', 0),
+                'files_parsed': reader_stats.get('files_parsed', 0),
+                'files_skipped': reader_stats.get('files_skipped', 0),
+                'files_failed': reader_stats.get('files_failed', 0),
+                'pages_loaded': reader_stats.get('pages_loaded', 0),
+                'attachments_loaded': reader_stats.get('attachments_loaded', 0),
+                'spaces_created': reader_stats.get('spaces_created', 0),
+                'orphan_pages': reader_stats.get('orphan_pages', 0),
+                'errors': reader_stats.get('errors', [])
+            }
+
+            self.logger.info(
+                f"Markdown import complete: {stats['pages_loaded']} pages loaded from "
+                f"{stats['files_parsed']} files across {stats['spaces_created']} spaces"
+            )
+
+            return stats
+
+        except Exception as e:
+            self.logger.error(f"Markdown import failed: {str(e)}", exc_info=True)
+            return {
+                'failed': True,
+                'error': str(e),
+                'pages_loaded': 0,
+                'files_parsed': 0
+            }
+
     def _execute_wikijs_import(self, tree: DocumentationTree) -> Dict[str, Any]:
         """
         Execute Phase 2b: Import to Wiki.js.

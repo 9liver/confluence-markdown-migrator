@@ -141,10 +141,17 @@ class MigrationReport:
         # Count total errors and warnings
         summary['total_errors'] = self._count_total_errors(phase_stats)
         summary['total_warnings'] = self._count_total_warnings(phase_stats)
-        
+
         # Calculate success rate
         if summary['pages'] > 0:
-            summary['success_rate'] = (summary['pages'] - summary['total_errors']) / summary['pages']
+            # For markdown_import workflows, use import phase failure counts
+            if 'markdown_import' in phase_stats and 'content_conversion' not in phase_stats:
+                import_stats = phase_stats['markdown_import']
+                failed_count = import_stats.get('files_failed', 0)
+                summary['success_rate'] = (summary['pages'] - failed_count) / summary['pages']
+            else:
+                # Standard workflow - use total errors
+                summary['success_rate'] = (summary['pages'] - summary['total_errors']) / summary['pages']
         else:
             summary['success_rate'] = 1.0
         
@@ -337,8 +344,23 @@ class MigrationReport:
                     'errors': bs_stats.get('errors', [])
                 }
         
+        # Markdown import phase
+        if 'markdown_import' in phase_stats:
+            import_stats = phase_stats['markdown_import']
+            breakdown['markdown_import'] = {
+                'files_scanned': import_stats.get('files_scanned', 0),
+                'files_parsed': import_stats.get('files_parsed', 0),
+                'files_skipped': import_stats.get('files_skipped', 0),
+                'files_failed': import_stats.get('files_failed', 0),
+                'pages_loaded': import_stats.get('pages_loaded', 0),
+                'attachments_loaded': import_stats.get('attachments_loaded', 0),
+                'spaces_created': import_stats.get('spaces_created', 0),
+                'orphan_pages': import_stats.get('orphan_pages', 0),
+                'errors': import_stats.get('errors', [])
+            }
+
         return breakdown
-    
+
     def _build_cache_stats(self, tree: DocumentationTree) -> Dict[str, Any]:
         """Build cache statistics section from tree metadata."""
         cache_stats = tree.metadata.get('cache_stats', {})
@@ -398,24 +420,42 @@ class MigrationReport:
     def _build_space_breakdown(self, tree: DocumentationTree) -> List[Dict[str, Any]]:
         """Build per-space statistics."""
         space_breakdown = []
-        
+
+        # Check if this is a markdown_import workflow
+        fetch_mode = tree.metadata.get('fetch_mode', 'api')
+        is_markdown_import = fetch_mode == 'markdown_import'
+
         for space_key, space in sorted(tree.spaces.items()):
             all_pages = self._get_all_pages(space.pages)
-            
+
             # Count pages by status
             total_pages = len(all_pages)
-            converted_pages = sum(
-                1 for page in all_pages
-                if page.conversion_metadata.get('conversion_status') == 'success'
-            )
-            failed_pages = sum(
-                1 for page in all_pages
-                if page.conversion_metadata.get('conversion_status') == 'failed'
-            )
-            
+
+            if is_markdown_import:
+                # For markdown_import, treat 'imported' and 'success' as successful
+                converted_pages = sum(
+                    1 for page in all_pages
+                    if page.conversion_metadata.get('conversion_status') in ('success', 'imported')
+                )
+                # Only count explicit 'failed' status
+                failed_pages = sum(
+                    1 for page in all_pages
+                    if page.conversion_metadata.get('conversion_status') == 'failed'
+                )
+            else:
+                # Standard conversion workflow
+                converted_pages = sum(
+                    1 for page in all_pages
+                    if page.conversion_metadata.get('conversion_status') == 'success'
+                )
+                failed_pages = sum(
+                    1 for page in all_pages
+                    if page.conversion_metadata.get('conversion_status') == 'failed'
+                )
+
             # Count attachments
             attachment_count = sum(len(page.attachments) for page in all_pages)
-            
+
             space_breakdown.append({
                 'key': space_key,
                 'name': space.name,
@@ -424,7 +464,7 @@ class MigrationReport:
                 'pages_failed': failed_pages,
                 'attachments': attachment_count
             })
-        
+
         return space_breakdown
     
     def _get_all_pages(self, pages) -> list:
@@ -570,7 +610,23 @@ class MigrationReport:
                 sections.append(
                     f"    Images: {bs.get('images_uploaded', 0)} uploaded"
                 )
-        
+
+        if 'markdown_import' in phases:
+            mi = phases['markdown_import']
+            sections.append("  Markdown Import:")
+            sections.append(
+                f"    Files: {mi.get('files_scanned', 0)} scanned, "
+                f"{mi.get('files_parsed', 0)} parsed"
+            )
+            sections.append(
+                f"    Pages: {mi.get('pages_loaded', 0)} loaded, "
+                f"{mi.get('attachments_loaded', 0)} attachments"
+            )
+            if mi.get('files_failed', 0) > 0:
+                sections.append(f"    Failed: {mi.get('files_failed', 0)} files")
+            if mi.get('orphan_pages', 0) > 0:
+                sections.append(f"    Orphans: {mi.get('orphan_pages', 0)} pages")
+
         sections.append("")
         
         # Integrity verification section
