@@ -40,6 +40,24 @@ class HtmlCleaner:
         self.logger.debug("HTML cleaning completed")
         return soup
     
+    def _convert_user_quoted_section(self, element: Tag) -> None:
+        """Convert user_quoted_section to a proper blockquote with callout attributes."""
+        # Create a new blockquote element
+        new_soup = BeautifulSoup('', 'lxml')
+        blockquote = new_soup.new_tag('blockquote')
+        
+        # Add callout attributes consistent with MacroHandler
+        blockquote['class'] = 'is-info'
+        blockquote['data-callout'] = 'info'
+        
+        # Move all children from user_quoted_section to the blockquote
+        for child in list(element.children):
+            blockquote.append(child.extract())
+        
+        # Replace the original element with the new blockquote
+        element.replace_with(blockquote)
+        self.logger.debug("Converted user_quoted_section to blockquote with callout attributes")
+    
     def _clean_export_html(self, soup: BeautifulSoup) -> None:
         """Clean export HTML (rendered HTML with all macros expanded)."""
         # Remove Confluence-specific classes
@@ -64,6 +82,10 @@ class HtmlCleaner:
             for element in soup.find_all(attrs={attr: True}):
                 del element[attr]
         
+        # Clean Confluence URLs and process emoticons
+        self._clean_confluence_urls(soup)
+        self._process_emoticons(soup)
+        
         # Remove navigation and header elements
         for selector in ['#header', '#navigation', '#footer', '.page-metadata']:
             for element in soup.select(selector):
@@ -76,11 +98,19 @@ class HtmlCleaner:
         
         # Clean up empty elements
         self._remove_empty_elements(soup)
+        
+        # Convert user_quoted_section to blockquotes with admonition support
+        for element in soup.find_all('user_quoted_section'):
+            self._convert_user_quoted_section(element)
     
     def _clean_storage_format(self, soup: BeautifulSoup) -> None:
         """Clean storage format (wiki markup with ac:namespace elements)."""
         # For storage format, we keep ac:structured-macro elements for macro handler
         # Only remove wrapper divs and navigation
+        
+        # Clean Confluence URLs and process emoticons
+        self._clean_confluence_urls(soup)
+        self._process_emoticons(soup)
         
         # Remove navigation and header elements
         for selector in ['#header', '#navigation', '#footer']:
@@ -190,3 +220,82 @@ class HtmlCleaner:
         
         if removed_count > 0:
             self.logger.debug(f"Removed {removed_count} empty elements")
+    
+    def _clean_confluence_urls(self, soup: BeautifulSoup) -> None:
+        """Clean Confluence-specific URL patterns from images and links."""
+        def normalize_url(url: str) -> str:
+            """Normalize a Confluence URL by removing /s/{token}/ patterns."""
+            # Pattern: /s/{token}/_/download/attachments/...
+            if '/s/' in url and '/_/download' in url:
+                match = re.search(r'/attachments/([^/?#]+)', url)
+                if match:
+                    return f"/attachments/{match.group(1)}"
+            
+            # Pattern: /s/{token}/.../emoticons/...
+            if '/s/' in url and '/emoticons/' in url:
+                match = re.search(r'/([^/]+)\.(?:svg|png|gif)$', url)
+                if match:
+                    return f"/emoticons/{match.group(1)}.svg"
+            
+            # Pattern: /s/{token}/... (general case) - strip /s/{token}/ prefix
+            # Example: /s/t1v677/8703/51k4y0/path/to/resource -> /path/to/resource
+            if url.startswith('/s/'):
+                # Match /s/{token}/pattern
+                match = re.search(r'^/s/[^/]+/[^/]+/[^/]+/(.+)$', url)
+                if match:
+                    return f'/{match.group(1)}'
+                
+                # Fallback: more lenient pattern for /s/{token}/anything
+                match = re.search(r'^/s/[^/]+/(.+)$', url)
+                if match:
+                    return f'/{match.group(1)}'
+            
+            # Legacy Confluence emoticon paths
+            if '/images/icons/emoticons/' in url:
+                match = re.search(r'/([^/]+)\.(?:svg|png|gif)$', url)
+                if match:
+                    return f"/emoticons/{match.group(1)}.svg"
+            
+            return url
+        
+        # Clean image URLs
+        for img in soup.find_all('img'):
+            src = img.get('src', '')
+            new_src = normalize_url(src)
+            if new_src != src:
+                img['src'] = new_src
+            
+            # Keep original alt/title attributes if no alt
+            if not img.get('alt'):
+                alt = img.get('title', '')
+                if alt:
+                    img['alt'] = alt
+        
+        # Clean link URLs
+        for a in soup.find_all('a'):
+            href = a.get('href', '')
+            new_href = normalize_url(href)
+            if new_href != href:
+                a['href'] = new_href
+    
+    def _process_emoticons(self, soup: BeautifulSoup) -> None:
+        """Convert emoticon images to !(name) text format."""
+        for img in soup.find_all('img', class_='emoticon'):
+            src = img.get('src', '')
+            alt = img.get('alt', '')
+            
+            # Extract emoticon name from src or alt
+            emoticon_name = ''
+            if src:
+                match = re.search(r'/([^/]+)\.(?:svg|png|gif)$', src)
+                if match:
+                    emoticon_name = match.group(1)
+            elif alt:
+                # Try to extract from alt text like "(smile)"
+                match = re.search(r'\(([^)]+)\)', alt)
+                if match:
+                    emoticon_name = match.group(1)
+            
+            # Use standardized !(name) format
+            replacement = f'!({emoticon_name or alt or "emoticon"})'
+            img.replace_with(replacement)

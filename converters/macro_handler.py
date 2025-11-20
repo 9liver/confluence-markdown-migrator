@@ -374,16 +374,25 @@ class MacroHandler:
                     if body.string:
                         return body.get_text(strip=True)
                     cdata = body.find(string=lambda text: isinstance(text, type(BeautifulSoup('', 'lxml').__class__)))
-                    return str(cdata) if cdata else body.get_text(strip=True)
+                    body_text = str(cdata) if cdata else body.get_text(strip=True)
+                    # Process emoticons even in plain text
+                    if not plain_text:  # Only process if we're returning HTML
+                        body_text = self._process_emoticons_in_string(body_text)
+                    return body_text
             else:
                 body = element.find('ac:rich-text-body')
                 if body:
                     # Include the rich text body content
-                    return body.decode_contents(formatter="html") or ''
+                    body_html = body.decode_contents(formatter="html") or ''
+                    # Process emoticons
+                    body_html = self._process_emoticons_in_string(body_html)
+                    return body_html
         else:  # export
             # Look for data-macro-body attribute or child elements
             body = element.get('data-macro-body')
             if body:
+                # Process emoticons
+                body = self._process_emoticons_in_string(body)
                 return body
 
             # Check for confluence-information-macro-body class
@@ -391,12 +400,19 @@ class MacroHandler:
             if body_div:
                 if plain_text:
                     return body_div.get_text() or ''
-                return body_div.decode_contents(formatter="html") or ''
+                body_html = body_div.decode_contents(formatter="html") or ''
+                # Process emoticons
+                body_html = self._process_emoticons_in_string(body_html)
+                return body_html
 
             # Return content based on plain_text flag
             if plain_text:
                 return element.get_text() or ''
-            return element.decode_contents(formatter="html") or ''
+            
+            body_html = element.decode_contents(formatter="html") or ''
+            # Process emoticons
+            body_html = self._process_emoticons_in_string(body_html)
+            return body_html
 
         return ''
 
@@ -451,12 +467,14 @@ class MacroHandler:
         return None
     
     def _create_blockquote(self, element: Tag, callout_type: str, title: str, body: str) -> None:
-        """Create blockquote structure for macro conversion."""
+        """Create blockquote structure for macro conversion with admonition support."""
         new_soup = BeautifulSoup('', 'lxml')
         blockquote = new_soup.new_tag('blockquote')
 
         if callout_type:
             blockquote['class'] = f'is-{callout_type}'
+            # Add data attribute for easier admonition detection by MarkdownConverter
+            blockquote['data-callout'] = callout_type
 
         # Add title
         if title:
@@ -468,6 +486,9 @@ class MacroHandler:
 
         # Add body content - parse and extract just the content, not wrapper elements
         if body:
+            # Process emoticons in the body before adding to blockquote
+            body = self._process_emoticons_in_string(body)
+            
             # Parse the body HTML
             body_soup = BeautifulSoup(body, 'lxml')
             # Get the body content, stripping html/body wrapper tags that lxml adds
@@ -493,6 +514,10 @@ class MacroHandler:
                     if title and child_text == title:
                         continue
 
+                    # Process emoticons in this child element
+                    if hasattr(child, 'find_all'):
+                        self._process_emoticons(child)
+
                     blockquote.append(child.extract() if hasattr(child, 'extract') else child)
             else:
                 # Fallback: just append the text
@@ -503,3 +528,43 @@ class MacroHandler:
                     blockquote.append(p)
 
         element.replace_with(blockquote)
+
+    def _process_emoticons(self, element: Tag) -> None:
+        """Convert emoticon img tags to text equivalents within an element."""
+        for img in element.find_all('img', class_='emoticon'):
+            self._convert_emoticon(img)
+    
+    def _process_emoticons_in_string(self, html_string: str) -> str:
+        """Process emoticons in an HTML string and return the modified string."""
+        # Quick check to avoid parsing if no emoticons
+        if 'emoticon' not in html_string:
+            return html_string
+            
+        soup = BeautifulSoup(html_string, 'lxml')
+        self._process_emoticons(soup)
+        # Return the modified HTML string
+        return str(soup)
+    
+    def _convert_emoticon(self, img: Tag) -> None:
+        """Convert an emoticon img tag to !(name) text format."""
+        src = img.get('src', '')
+        alt = img.get('alt', '')
+        
+        # Extract emoticon name from src URL (e.g., .../smile.svg -> smile)
+        emoticon_name = ''
+        if src:
+            # Look for common emoticon patterns
+            match = re.search(r'/([^/]+)\.(?:svg|png|gif)$', src)
+            if match:
+                emoticon_name = match.group(1)
+        elif alt:
+            # Try to extract from alt text like "(smile)"
+            match = re.search(r'\(([^)]+)\)', alt)
+            if match:
+                emoticon_name = match.group(1)
+        
+        # Use standardized !(name) format
+        replacement = f'!({emoticon_name or alt or "emoticon"})'
+        
+        # Replace the img tag with text
+        img.replace_with(replacement)

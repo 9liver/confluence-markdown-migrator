@@ -627,15 +627,18 @@ class MarkdownExporter:
         if author:
             frontmatter['author'] = author
 
-        # Labels
+        # Labels - ensure it's a list
         labels = page.metadata.get("labels", [])
+        # Ensure labels is always a list for proper YAML formatting
         if labels:
-            frontmatter['labels'] = labels
+            frontmatter['labels'] = list(labels)  # Force list type
+        else:
+            frontmatter['labels'] = []
 
         # Version
         frontmatter['version'] = page.metadata.get("version", 1)
 
-        # Attachment metadata
+        # Attachment metadata - ensure it's always an array
         if page.attachments:
             attachments_list = []
             for att in page.attachments:
@@ -646,14 +649,15 @@ class MarkdownExporter:
                     'file_size': att.file_size
                 }
                 if att.local_path:
-                    att_data['local_path'] = att.local_path
+                    att_data['local_path'] = str(att.local_path)
                 if att.content_checksum:
                     att_data['checksum'] = att.content_checksum
                 attachments_list.append(att_data)
 
-            frontmatter['attachments'] = attachments_list
+            frontmatter['attachments'] = attachments_list  # Will be formatted as YAML array
             frontmatter['attachment_count'] = len(page.attachments)
         else:
+            frontmatter['attachments'] = []  # Explicitly empty array
             frontmatter['attachment_count'] = 0
 
         # Conversion metadata
@@ -688,9 +692,10 @@ class MarkdownExporter:
         frontmatter['export_timestamp'] = datetime.utcnow().isoformat() + 'Z'
 
         # Use yaml.dump for proper escaping and formatting
+        # default_flow_style=False ensures arrays and lists are formatted in block style (with - prefixes)
         yaml_str = yaml.dump(
             frontmatter,
-            default_flow_style=False,
+            default_flow_style=False,  # Forces block style for lists/arrays
             allow_unicode=True,
             sort_keys=False,
             width=1000  # Prevent line wrapping

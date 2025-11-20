@@ -544,6 +544,173 @@ converter:
   heading_offset: 0        # Adjust heading levels
 ```
 
+### Conversion Quality and Fidelity
+
+#### Enhanced Macro Conversion
+
+The converter now provides high-fidelity conversion of Confluence macros to proper Markdown/observatory syntax, addressing common issues with previous versions:
+
+**Before (Old Conversion):**
+```markdown
+> {.is-info}
+> **Information**
+>
+> This is an info macro
+```
+
+**After (New Conversion):**
+```markdown
+> [!info] Information
+>
+> This is an info macro
+```
+
+**Supported Macro Types:**
+
+| Confluence Macro | Wiki.js Admonition | Fallback Blockquote |
+|-----------------|-------------------|---------------------|
+| `info` | `[!info] Title` | `> **Info**` content |
+| `warning` | `[!warning] Title` | `> **Warning**` content |
+| `note` | `[!warning] Title` | `> **Note**` content |
+| `tip` | `[!info] Title` | `> **Tip**` content |
+| `code` | ` ```language` | ` ``` ` code blocks |
+| `expand` | `<details>` | N/A (collapsible) |
+
+**Auto-detection Features:**
+- Macro types are automatically detected from Confluence HTML classes
+- Fallback text (e.g., "Info", "Warning") is automatically added if no title is provided
+- Blockquotes with `data-callout` attributes are converted to proper admonition syntax
+
+#### Improved Code Block Detection
+
+Handles various Confluence code block formats:
+
+**Format 1: Standard Code Macro**
+```html
+<div class="code panel pdl">
+  <pre class="syntaxhighlighter-pre" data-syntaxhighlighter-params="brush: python; gutter: false">
+def hello():
+    print("Hello, World!")
+  </pre>
+</div>
+```
+
+**Format 2: Inline Code Panel**
+```html
+<div class="code panel pdl">
+  <div class="codeContent">#!/bin/bash
+echo "Hello"</div>
+</div>
+```
+
+**Output (Both Formats):**
+````markdown
+```python
+def hello():
+    print("Hello, World!")
+```
+````
+
+**Language Detection:**
+- Extracts from `data-syntaxhighlighter-params` (e.g., `brush: python`)
+- Maps common Confluence language names (`bash`, `shell`, `py`)
+- Falls back to class-based detection (`class="language-python"`)
+- Defaults to plain text if no language detected
+
+#### Emoticon and Icon Handling
+
+Confluence emoticons are converted to the `!(name)` textual format for portability and consistency:
+
+| Confluence Icon | Converted To |
+|----------------|--------------|
+| `smile.svg` | !(smile) |
+| `information.svg` | !(information) |
+| `warning.svg` | !(warning) |
+| `tick.svg` | !(tick) |
+| `lightbulb.svg` | !(lightbulb) |
+
+**Example:**
+```html
+<img class="emoticon" src="/images/icons/emoticons/smile.svg" alt="(smile)">
+```
+
+Converts to: `!(smile)`
+
+#### Link and URL Cleaning
+
+Cleans Confluence-specific URL patterns, including `/s/{token}/` URLs:
+
+**Before:**
+```markdown
+![image](/s/t1v677/8703/51k4y0/_/images/icons/emoticons/star.svg)
+![image](/s/gb3a9d/8703/51fn9m/path/to/resource.png)
+[file](/download/attachments/12345/document.pdf)
+```
+
+**After:**
+```markdown
+![image](/emoticons/star.svg)
+![image](/path/to/resource.png)
+[file](/attachments/document.pdf)
+```
+
+The URL cleaner:
+- Strips `/s/{token}/` prefixes from all URLs
+- Normalizes attachment paths to `/attachments/{filename}`
+- Converts emoticon paths to `/emoticons/{filename}.svg`
+- Handles legacy Confluence emoticon paths from `/images/icons/emoticons/`
+
+#### Frontmatter Formatting
+
+Generates properly formatted YAML frontmatter with explicit list/array syntax:
+
+```yaml
+---
+confluence_page_id: '123456'
+title: API Documentation
+space_key: DEV
+labels:          # Properly formatted as YAML list
+  - api
+  - rest
+  - documentation
+attachments:     # Properly formatted as YAML array
+  - id: '789'
+    title: swagger.json
+    media_type: application/json
+    file_size: 10240
+    local_path: attachments/swagger.json
+conversion_status: success
+export_timestamp: 2025-01-15T10:30:00Z
+---
+```
+
+#### Troubleshooting Common Issues
+
+**Issue: Missing Code Fences**
+- **Cause:** Code blocks wrapped in divs not detected
+- **Solution:** New code panel detection handles `div.code.panel.pdl` structures
+- **Verify:** Check HTML has `code` and `panel` classes
+
+**Issue: Macros Showing as Blockquotes Instead of Admonitions**
+- **Cause:** `data-callout` attributes not being processed
+- **Solution:** Enhanced blockquote converter now recognizes `data-callout` attributes
+- **Verify:** Check generated HTML has `data-callout="info|warning|etc"`
+
+**Issue: Emoticons Showing as Broken Images**
+- **Cause:** Confluence-specific emoticon URLs not cleaned or converted to text
+- **Solution:** Emoticons are converted to `!(name)` text format instead of images
+- **Verify:** Check HTML has `<img class="emoticon">` tags which will be replaced with `!(name)`
+
+**Issue: Frontmatter Lists Not Rendering Correctly**
+- **Cause:** YAML lists formatted in inline style instead of block style
+- **Solution:** Now uses explicit list/array syntax with `-` prefixes
+- **Verify:** Check `yaml.dump()` uses `default_flow_style=False`
+
+**Issue: User-quoted-section Placeholders in Output**
+- **Cause:** Remnants from incomplete macro conversion
+- **Solution:** HtmlCleaner now strips `<user_quoted_section>` tags
+- **Verify:** Check HTML doesn't contain these placeholder tags
+
 ### Error Handling & Reliability
 
 **Attachment Download Robustness**:

@@ -215,9 +215,60 @@ class MarkdownConverter(MarkdownifyConverter):
         """Convert BeautifulSoup to markdown using the subclassed converter."""
         self.logger.debug("Converting to markdown")
         
+        # Pre-process the soup to handle special cases
+        self._pre_process_html(soup)
+        
         # Use the inherited convert method from MarkdownifyConverter
         # This will use our custom convert_* methods
         return super().convert(str(soup))
+    
+    def _pre_process_html(self, soup: BeautifulSoup) -> None:
+        """Pre-process HTML to handle edge cases before markdown conversion."""
+        # Find and process code panel divs
+        self._process_code_panels(soup)
+    
+    def _process_code_panels(self, soup: BeautifulSoup) -> None:
+        """Process code panel divs to ensure proper code block conversion."""
+        for div in soup.find_all('div', class_=True):
+            classes = div.get('class', [])
+            has_code = any(cls == 'code' for cls in classes)
+            has_panel = any(cls == 'panel' or cls == 'pdl' for cls in classes)
+            
+            if has_code and has_panel:
+                # Check if this already has a pre element with proper structure
+                pre_elem = div.find('pre')
+                if pre_elem and pre_elem.find('code'):
+                    # Already properly structured
+                    continue
+                
+                # Ensure the pre element has a code child
+                pre_elem = div.find('pre')
+                if pre_elem and not pre_elem.find('code'):
+                    code_elem = soup.new_tag('code')
+                    code_elem.string = pre_elem.get_text()
+                    pre_elem.clear()
+                    pre_elem.append(code_elem)
+    
+    def _convert_emoticon(self, img):
+        """Convert an emoticon img to !(name) text format."""
+        src = img.get('src', '')
+        alt = img.get('alt', '')
+        
+        # Extract emoticon name from src
+        emoticon_name = ''
+        if src:
+            match = re.search(r'/([^/]+)\.(?:svg|png|gif)$', src)
+            if match:
+                emoticon_name = match.group(1)
+        elif alt:
+            # Try to extract from alt text like "(smile)"
+            match = re.search(r'\(([^)]+)\)', alt)
+            if match:
+                emoticon_name = match.group(1)
+        
+        # Use standardized !(name) format
+        replacement = f'!({emoticon_name or alt or "emoticon"})'
+        img.replace_with(replacement)
     
     def _post_process_markdown(self, markdown: str, page: Any) -> str:
         """Apply post-processing to generated markdown."""
@@ -462,57 +513,141 @@ class MarkdownConverter(MarkdownifyConverter):
         return markdown
     
     def _convert_callouts_to_admonitions(self, markdown: str) -> str:
-        """Convert blockquote callouts to simple, universally-supported format."""
+        """Convert blockquotes with callout markers to admonition syntax."""
         import re
-        lines = markdown.split('\n')
-        result = []
-        skip_next_empty = False
-
-        i = 0
-        while i < len(lines):
-            line = lines[i]
-
-            # Check if line is a blockquote with callout class marker
-            callout_match = re.match(r'> \{\.is-(info|warning|success|danger)\}', line)
-            if callout_match:
-                callout_type = callout_match.group(1)
-
-                # Map to human-readable labels
-                label_map = {
-                    'info': 'Info',
-                    'warning': 'Warnung',
-                    'success': 'Tipp',
-                    'danger': 'Achtung'
-                }
-                label = label_map.get(callout_type, 'Hinweis')
-
-                # Look at next non-empty blockquote line to see if it has a title
-                j = i + 1
-                while j < len(lines) and lines[j].strip() == '>':
-                    j += 1
-
-                if j < len(lines) and lines[j].startswith('>'):
-                    next_content = lines[j][1:].strip()
-                    # Check if next line is already a bold title
-                    if next_content.startswith('**') and next_content.endswith('**'):
-                        # Already has title, just skip the class marker
-                        i += 1
-                        continue
-                    else:
-                        # Add label as first line
-                        result.append(f'> **{label}**')
-                        result.append('>')
+        
+        # Enhanced pattern to match blockquotes with callout class markers OR data-callout attributes
+        pattern = re.compile(
+            r'(> \{\.is-(info|warning|success|danger)\}\n)?'  # Optional class marker
+            r'(> \[data-callout=(info|warning|success|danger)\]\n)?'  # Optional data attribute marker
+            r'> \*\*([^*]+)\*\*\n'  # Title line
+            r'(>\n)*'  # Optional empty blockquote lines
+            r'((?:> [^>].*\n?)*)'  # Content lines (non-greedy)
+        )
+        
+        def replace_admonition(match):
+            # Determine callout type (from class, data attribute, or infer from title)
+            callout_type = match.group(2) or match.group(4)
+            title = match.group(5)
+            content = match.group(7) or ''
+            
+            # Map title to callout type if not already set
+            if not callout_type:
+                title_lower = title.lower()
+                if 'info' in title_lower or 'information' in title_lower:
+                    callout_type = 'info'
+                elif 'warn' in title_lower:
+                    callout_type = 'warning'
+                elif 'tip' in title_lower or 'success' in title_lower:
+                    callout_type = 'info'  # Wiki.js uses [!info] for tips
                 else:
-                    result.append(f'> **{label}**')
-                    result.append('>')
+                    callout_type = 'info'
+            
+            # Map to Wiki.js admonition syntax
+            admonition_map = {
+                'info': '[!info]',
+                'warning': '[!warning]',
+                'success': '[!info]',  # Wiki.js doesn't have success, use info
+                'danger': '[!warning]'  # Wiki.js doesn't have danger, use warning
+            }
+            
+            admon_type = admonition_map.get(callout_type, '[!info]')
+            
+            # Format the admonition
+            result = f"> {admon_type} {title}\n"
+            if content:
+                # Add content lines, ensuring they're properly prefixed
+                content_lines = content.split('\n')
+                for line in content_lines:
+                    if line.strip():
+                        result += f"> {line[2:]}\n"  # Remove '> ' prefix and re-add
+                    else:
+                        result += ">\n"
+            
+            return result + "\n"
+        
+        # Apply the transformation
+        return pattern.sub(replace_admonition, markdown)
 
-                i += 1
-                continue
+    def _convert_blockquote_to_admonition(self, el) -> str:
+        """Convert blockquote element to admonition syntax during HTML conversion."""
+        callout_type = el.get('data-callout', '')
+        
+        if not callout_type:
+            # Fall back to class-based detection
+            classes = el.get('class', [])
+            for cls in classes:
+                if cls.startswith('is-'):
+                    callout_type = cls[3:]  # Remove 'is-' prefix
+                    break
+        
+        # Extract content
+        content = self._get_text_content(el)
+        lines = content.split('\n')
+        
+        # Extract title (first bold line)
+        title = "Info"  # Default
+        content_start = 0
+        
+        for i, line in enumerate(lines):
+            if line.strip().startswith('**') and line.strip().endswith('**'):
+                title = line.strip().strip('*')
+                content_start = i + 1
+                break
+        
+        # Get remaining content
+        body_content = '\n'.join(lines[content_start:]).strip()
+        
+        if callout_type:
+            # Use Wiki.js admonition syntax
+            admon_map = {
+                'info': '[!info]',
+                'warning': '[!warning]',
+                'success': '[!info]',
+                'danger': '[!warning]'
+            }
+            admon_type = admon_map.get(callout_type, '[!info]')
+            
+            result = f"> {admon_type} {title}\n"
+            if body_content:
+                result += f">\n"
+                for line in body_content.split('\n'):
+                    if line.strip():
+                        result += f"> {line}\n"
+                    else:
+                        result += ">\n"
+            return result + '\n'
+        else:
+            # Regular blockquote
+            result = ''
+            for line in lines:
+                if line.strip():
+                    result += f"> {line}\n"
+                else:
+                    result += ">\n"
+            return result + '\n'
 
-            result.append(line)
-            i += 1
-
-        return '\n'.join(result)
+    def _get_text_content(self, el):
+        """Extract text content from element, preserving some structure."""
+        from bs4 import BeautifulSoup
+        
+        # Use markdownify to convert to markdown, but customize for our needs
+        text = ''
+        for child in el.children:
+            if hasattr(child, 'name') and child.name:
+                if child.name == 'p':
+                    text += child.get_text() + '\n'
+                elif child.name == 'br':
+                    text += '\n'
+                elif child.name in ['strong', 'b']:
+                    text += f"**{child.get_text()}**"
+                elif child.name in ['em', 'i']:
+                    text += f"*{child.get_text()}*"
+                else:
+                    text += child.get_text()
+            else:
+                text += str(child)
+        return text.strip()
     
     def _update_conversion_metadata(self, page: Any, markdown: str, macro_stats: Dict[str, Any],
                                    macro_warnings: List[str], link_metadata: List[Dict],
@@ -985,16 +1120,23 @@ class MarkdownConverter(MarkdownifyConverter):
             return f'{indent}{bullet} {text}\n'
 
     def convert_blockquote(self, el, text, parent_tags=None, **kwargs):
-        """Handle blockquotes, check for callout classes."""
-        # Check for callout classes
-        classes = el.get('class', [])
-        callout_class = None
-        for cls in classes:
-            if cls.startswith('is-'):
-                callout_class = cls
-                break
-
-        # Clean up text - ensure each line is properly prefixed
+        """Handle blockquotes, with special handling for callouts that should become admonitions."""
+        # Check for callout markers
+        callout_type = el.get('data-callout', '')
+        
+        if not callout_type:
+            # Check for callout classes as fallback
+            classes = el.get('class', [])
+            for cls in classes:
+                if cls.startswith('is-'):
+                    callout_type = cls[3:]  # Remove 'is-' prefix
+                    break
+        
+        # If this is a callout, use the special admonition converter
+        if callout_type:
+            return self._convert_blockquote_to_admonition(el)
+        
+        # Regular blockquote processing
         text = text.strip()
         if not text:
             return ''
@@ -1003,19 +1145,12 @@ class MarkdownConverter(MarkdownifyConverter):
         lines = text.split('\n')
         quoted_lines = []
         for line in lines:
-            # Don't double-prefix lines that already start with >
             if line.startswith('>'):
                 quoted_lines.append(line)
             else:
                 quoted_lines.append(f'> {line}' if line.strip() else '>')
 
-        result = '\n'.join(quoted_lines)
-
-        # Add callout class marker at the beginning
-        if callout_class:
-            result = f'> {{.{callout_class}}}\n{result}'
-
-        return result + '\n\n'
+        return '\n'.join(quoted_lines) + '\n\n'
 
     def convert_span(self, el, text, parent_tags=None, **kwargs):
         """Handle span elements, including Confluence anchors."""
@@ -1052,6 +1187,99 @@ class MarkdownConverter(MarkdownifyConverter):
 
         # Plain pre without code element
         return f"```\n{text.strip()}\n```\n\n"
+    
+    def convert_div(self, el, text, parent_tags=None, **kwargs):
+        """Handle div elements, with special handling for code panels."""
+        classes = el.get('class', [])
+        
+        # Check if this is a code panel (has both 'code' and 'panel' classes)
+        has_code = any(cls == 'code' for cls in classes)
+        has_panel = any(cls == 'panel' or cls == 'pdl' for cls in classes)
+        
+        if has_code and has_panel:
+            # This is a Confluence code panel
+            # Try to extract language and code
+            language = ''
+            code_text = ''
+            
+            # Try to find pre element with syntaxhighlighter
+            pre_elem = el.find('pre')
+            if pre_elem:
+                params = pre_elem.get('data-syntaxhighlighter-params', '')
+                if params:
+                    language = self._parse_syntaxhighlighter_language(params)
+                code_text = pre_elem.get_text()
+            else:
+                # Try codeContent div
+                code_content = el.find(class_='codeContent')
+                if code_content:
+                    code_text = code_content.get_text()
+            
+            # Try to extract title from panelHeader
+            title = ''
+            panel_header = el.find(class_='panelHeader')
+            if not panel_header:
+                panel_header = el.find(class_='codeHeader')
+            if panel_header:
+                title = panel_header.get_text(strip=True)
+            
+            # Format the code block
+            fenced_code = f"```{language}\n{code_text.strip()}\n```\n\n"
+            if title:
+                return f"**{title}**\n\n{fenced_code}"
+            return fenced_code
+        
+        # Process emoticons in the div
+        if el.find('img', class_='emoticon'):
+            soup = BeautifulSoup('', 'lxml')
+            # Copy the div and process emoticons
+            div_copy = BeautifulSoup(str(el), 'lxml').find('div')
+            self._process_emoticons(div_copy)
+            text = self._get_text_content(div_copy)
+            return text + '\n\n'
+        
+        # Regular div - return text content
+        return text + '\n\n' if text.strip() else ''
+    
+    def _process_emoticons(self, element):
+        """Convert emoticon img tags to text equivalents."""
+        from bs4 import BeautifulSoup
+        import re
+        
+        for img in element.find_all('img', class_='emoticon'):
+            src = img.get('src', '')
+            alt = img.get('alt', '')
+            
+            # Extract emoticon name from src URL
+            emoticon_name = ''
+            if src:
+                match = re.search(r'/([^/]+)\.(?:svg|png|gif)$', src)
+                if match:
+                    emoticon_name = match.group(1)
+            
+            # Common emoticon mappings
+            emoticon_map = {
+                'smile': '😊',
+                'sad': '😢',
+                'wink': '😉',
+                'laugh': '😄',
+                'cheeky': '😏',
+                'grin': '😁',
+                'wondering': '🤔',
+                'cool': '😎',
+                'cry': '😭',
+                'information': 'ℹ️',
+                'warning': '⚠️',
+                'error': '❌',
+                'tick': '✅',
+                'cross': '❌',
+                'lightbulb-on': '💡',
+                'lightbulb': '💡',
+                'star': '⭐',
+            }
+            
+            replacement = emoticon_map.get(emoticon_name, alt or f':{emoticon_name}:')
+            img.replace_with(replacement)
 
     def convert_code(self, el, text, parent_tags=None, **kwargs):
         """Handle inline code and code blocks."""
