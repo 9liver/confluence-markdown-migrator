@@ -236,6 +236,14 @@ class MarkdownConverter(MarkdownifyConverter):
             # Step 6: Convert to markdown
             raw_markdown = self._convert_to_markdown(soup)
             
+            # ENHANCED: Validate content preservation
+            original_length = len(page.content)
+            if len(raw_markdown) < original_length * 0.3:  # Lost >70% of content
+                self.logger.warning(
+                    f"Significant content loss detected for page {page.id}: "
+                    f"Original {original_length} chars -> Markdown {len(raw_markdown)} chars"
+                )
+            
             # Step 7: Post-process markdown (stores link_stats on self)
             processed_markdown = self._post_process_markdown(raw_markdown, page)
             
@@ -1060,10 +1068,18 @@ class MarkdownConverter(MarkdownifyConverter):
         code_el = el.find('code')
         if code_el:
             language = self._extract_code_language(code_el)
+            # ENHANCED: Get text directly from code element, not from 'text' param
             code_text = code_el.get_text()
         else:
             language = self._parse_syntaxhighlighter_language(params) if params else ''
-            code_text = text
+            # ENHANCED: Get text from el itself if no code child
+            code_text = el.get_text() if el.get_text().strip() else text
+        
+        # ENHANCED: Add validation and logging
+        if not code_text or not code_text.strip():
+            self.logger.warning(f"Empty code block detected in pre element")
+            # Try one more fallback: get all text from element
+            code_text = ''.join(el.stripped_strings)
         
         # Format the code block with proper language
         code_text_stripped = code_text.rstrip('\n')
@@ -1187,16 +1203,34 @@ class MarkdownConverter(MarkdownifyConverter):
                 child_md = self.convert(child_html)
                 if child_md:
                     parts.append(child_md.strip())
+            elif child.name == 'pre':
+                # ENHANCED: Direct pre element handling
+                pre_md = self.convert_pre(child, child.get_text())
+                if pre_md:
+                    parts.append(pre_md.strip())
+            elif child.name in ['p', 'span', 'strong', 'em', 'b', 'i', 'code', 'a']:
+                # Inline elements - convert recursively
+                child_html = str(child)
+                child_md = self.convert(child_html)
+                if child_md:
+                    parts.append(child_md.strip())
             elif child.name == 'div':
                 # Check if it's a code panel
                 classes = child.get('class', [])
-                is_code_panel = any('code' in classes) and any('panel' in classes)
+                is_code_panel = any('code' in str(cls) for cls in classes) and any('panel' in str(cls) for cls in classes)
                 
                 if is_code_panel or child.find('pre'):
-                    # Code block - convert with newline separation
-                    child_md = self.convert(str(child))
-                    if child_md:
-                        parts.append(child_md.strip())
+                    # ENHANCED: Code block - convert with proper handling
+                    pre_elem = child.find('pre')
+                    if pre_elem:
+                        pre_md = self.convert_pre(pre_elem, pre_elem.get_text())
+                        if pre_md:
+                            parts.append(pre_md.strip())
+                    else:
+                        # Fallback to regular conversion
+                        child_md = self.convert(str(child))
+                        if child_md:
+                            parts.append(child_md.strip())
                 else:
                     # Regular div - convert content
                     child_md = self.convert(str(child))
@@ -1209,7 +1243,7 @@ class MarkdownConverter(MarkdownifyConverter):
                     parts.append(child_md.strip())
         
         # Join parts with double newlines for paragraph separation
-        content = '\\n\\n'.join(parts)
+        content = '\n\n'.join(parts)  # FIXED: was '\\\\n\\n'
         # Append nested list content if any
         if nested_list_content:
             content += nested_list_content

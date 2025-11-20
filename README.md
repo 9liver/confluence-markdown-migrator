@@ -291,6 +291,71 @@ python migrate.py --export-target both_wikis
 - Imports to BookStack via REST API
 - Useful for: multi-platform deployments, redundancy
 
+## Markdown Conversion Quality
+
+### Recent Improvements
+
+The converter has been significantly enhanced to ensure 1:1 fidelity with Confluence content:
+
+#### Code Blocks
+- ✅ Properly extracts code from `syntaxhighlighter-pre` elements
+- ✅ Preserves file headers as language-appropriate comments
+- ✅ Detects language from `brush:` parameters (bash, python, java, etc.)
+- ✅ Handles multi-line configuration files
+
+**Example Input (Confluence HTML)**:
+```html
+<div class="code panel pdl">
+    <div class="codeHeader panelHeader pdl"><b>~/.profile</b></div>
+    <div class="codeContent panelContent pdl">
+        <pre data-syntaxhighlighter-params="brush: bash">export PATH="$HOME/.local/bin:$PATH"</pre>
+    </div>
+</div>
+```
+
+**Example Output (Markdown)**:
+```markdown
+# ~/.profile
+
+```bash
+export PATH="$HOME/.local/bin:$PATH"
+```
+```
+
+#### Nested Lists
+- ✅ Maintains proper indentation (4 spaces per level)
+- ✅ Handles code blocks within list items
+- ✅ Preserves ordered list numbering (1,2,3 → a,b,c → i,ii,iii)
+- ✅ No more literal `\n` characters in output
+
+#### Admonitions (Info/Warning Boxes)
+- ✅ Converts to Wiki.js/Obsidian-compatible `> [!type]` syntax
+- ✅ Proper spacing between consecutive admonitions
+- ✅ Preserves nested content and formatting
+
+### Known Limitations
+
+1. **Emoticons**: Converted to text representations (e.g., `!(smile)`)
+2. **Complex Tables**: Very complex tables with merged cells may need manual review
+3. **Custom Macros**: Unsupported macros are preserved as blockquotes with warnings
+4. **Confluence-specific Links**: Internal page links are preserved but may need adjustment for target wiki
+
+### Troubleshooting
+
+If you notice missing content in exports:
+
+1. **Check Logs**: Look for warnings about empty code blocks or content loss
+2. **Validate HTML**: Ensure the source HTML is complete (use `--mode api` for best results)
+3. **Test Incrementally**: Export a single page first with `--page-id` to verify conversion
+4. **Report Issues**: Include the page ID and a snippet of the problematic HTML
+
+### Testing
+
+Run the conversion test suite:
+```bash
+pytest tests/test_markdown_conversion.py -v
+```
+
 ## Conversion Examples
 
 This section documents how Confluence-specific elements are converted to Markdown for 1:1 content fidelity.

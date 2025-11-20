@@ -232,7 +232,7 @@ class MacroHandler:
                 # Store this for later deletion to avoid duplication
                 code_header['data-processed'] = 'true'
 
-        # Extract code content - always get text, not HTML
+        # ENHANCED: Extract code content with multiple fallbacks
         code = ''
         # First check for pre element with syntaxhighlighter
         pre_elem = element.find('pre', class_='syntaxhighlighter-pre')
@@ -246,6 +246,7 @@ class MacroHandler:
                 pre_elem = code_content.find('pre')
         
         if pre_elem:
+            # ENHANCED: Use get_text() to ensure we get all text content
             code = pre_elem.get_text()
             # Also try to get language from this element if not yet found
             if not language:
@@ -253,8 +254,20 @@ class MacroHandler:
                 if params:
                     language = self._extract_language_from_syntaxhighlighter_params(params)
         else:
-            # Fallback: just get all text from the element
-            code = element.get_text()
+            # ENHANCED: Multiple fallback strategies
+            # Try codeContent div
+            code_content = element.find(class_='codeContent')
+            if code_content:
+                code = code_content.get_text()
+            else:
+                # Last resort: get all text from the element
+                code = element.get_text()
+        
+        # ENHANCED: Validate code content
+        if not code or not code.strip():
+            self.logger.warning(f"Empty code block detected in macro conversion")
+            # Try one more time with stripped_strings
+            code = '\n'.join(element.stripped_strings)
 
         # Get the actual pre element from the DOM that we'll be modifying
         actual_pre_elem = pre_elem or element.find('pre')
@@ -268,7 +281,8 @@ class MacroHandler:
         if language:
             code_tag['class'] = f'language-{language}'
         
-        code_tag.string = code or ''
+        # ENHANCED: Ensure code is never empty
+        code_tag.string = code if code else '# Empty code block'
         pre.append(code_tag)
         
         # Store code header in data attribute on pre element for later use
