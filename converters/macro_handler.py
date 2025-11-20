@@ -375,9 +375,7 @@ class MacroHandler:
                         return body.get_text(strip=True)
                     cdata = body.find(string=lambda text: isinstance(text, type(BeautifulSoup('', 'lxml').__class__)))
                     body_text = str(cdata) if cdata else body.get_text(strip=True)
-                    # Process emoticons even in plain text
-                    if not plain_text:  # Only process if we're returning HTML
-                        body_text = self._process_emoticons_in_string(body_text)
+                    # Return plain text without emoticon processing
                     return body_text
             else:
                 body = element.find('ac:rich-text-body')

@@ -306,6 +306,10 @@ class MarkdownConverter(MarkdownifyConverter):
             markdown, link_stats = self.link_processor.process_links(markdown, page)
             self._last_link_stats = link_stats  # Store for later use
 
+        # Strip remaining HTML tags if strict_markdown is enabled
+        if self.strict_markdown:
+            markdown = self._strip_remaining_html_tags(markdown)
+
         return markdown
 
     def _final_cleanup(self, markdown: str) -> str:
@@ -324,6 +328,26 @@ class MarkdownConverter(MarkdownifyConverter):
             result.append(line)
 
         return '\n'.join(result)
+
+    def _strip_remaining_html_tags(self, markdown: str) -> str:
+        """Strip remaining HTML tags from markdown using conservative allowlist."""
+        import re
+        
+        # Define safe tags that can be kept in markdown
+        safe_tags = ['details', 'summary']
+        
+        # Pattern to match HTML tags (including closing tags)
+        # This will match <tag> or </tag> patterns
+        html_pattern = re.compile(r'<\/?([^\s>]+)[^>]*>', re.IGNORECASE)
+        
+        def replace_tag(match):
+            tag_name = match.group(1).lower()
+            # Keep safe tags, remove others
+            if tag_name in safe_tags:
+                return match.group(0)
+            return ''
+        
+        return html_pattern.sub(replace_tag, markdown)
 
     def _indent_code_blocks_in_lists(self, markdown: str) -> str:
         """Indent content that follows list items to keep them part of the list."""
@@ -1174,7 +1198,7 @@ class MarkdownConverter(MarkdownifyConverter):
         if params:
             language = self._parse_syntaxhighlighter_language(params)
             if language:
-                return f"```{language}\n{text.strip()}\n```\n\n"
+                return f"```{language}\n{text.rstrip('\n')}\n```\n\n"
 
         # Check for code child element
         code_el = el.find('code')
@@ -1182,11 +1206,11 @@ class MarkdownConverter(MarkdownifyConverter):
             language = self._extract_code_language(code_el)
             code_text = code_el.get_text()
             if language and language != 'text':
-                return f"```{language}\n{code_text.strip()}\n```\n\n"
-            return f"```\n{code_text.strip()}\n```\n\n"
+                return f"```{language}\n{code_text.rstrip('\n')}\n```\n\n"
+            return f"```\n{code_text.rstrip('\n')}\n```\n\n"
 
         # Plain pre without code element
-        return f"```\n{text.strip()}\n```\n\n"
+        return f"```\n{text.rstrip('\n')}\n```\n\n"
     
     def convert_div(self, el, text, parent_tags=None, **kwargs):
         """Handle div elements, with special handling for code panels."""
@@ -1224,7 +1248,7 @@ class MarkdownConverter(MarkdownifyConverter):
                 title = panel_header.get_text(strip=True)
             
             # Format the code block
-            fenced_code = f"```{language}\n{code_text.strip()}\n```\n\n"
+            fenced_code = f"```{language}\n{code_text.rstrip('\n')}\n```\n\n"
             if title:
                 return f"**{title}**\n\n{fenced_code}"
             return fenced_code
@@ -1257,28 +1281,8 @@ class MarkdownConverter(MarkdownifyConverter):
                 if match:
                     emoticon_name = match.group(1)
             
-            # Common emoticon mappings
-            emoticon_map = {
-                'smile': '😊',
-                'sad': '😢',
-                'wink': '😉',
-                'laugh': '😄',
-                'cheeky': '😏',
-                'grin': '😁',
-                'wondering': '🤔',
-                'cool': '😎',
-                'cry': '😭',
-                'information': 'ℹ️',
-                'warning': '⚠️',
-                'error': '❌',
-                'tick': '✅',
-                'cross': '❌',
-                'lightbulb-on': '💡',
-                'lightbulb': '💡',
-                'star': '⭐',
-            }
-            
-            replacement = emoticon_map.get(emoticon_name, alt or f':{emoticon_name}:')
+            # Use standardized !(name) format
+            replacement = f'!({emoticon_name or alt or "emoticon"})'
             img.replace_with(replacement)
 
     def convert_code(self, el, text, parent_tags=None, **kwargs):
