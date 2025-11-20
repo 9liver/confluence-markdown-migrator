@@ -35,5 +35,8 @@ responses>=0.23.0                # Mock HTTP responses for testing
 # Optional: Additional utilities for enhanced functionality
 python-dotenv>=1.0.0             # Load environment variables from .env files
 
+# Optional: System certificate support for internal/corporate CAs
+truststore>=0.10.0               # Use system certificate store instead of bundled certifi
+
 # Note: If you encounter issues with graphql-core version conflicts,
 # you may need to pin: graphql-core<3.3,>=3.2

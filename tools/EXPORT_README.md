@@ -10,27 +10,43 @@ Stelle sicher, dass die benötigten Pakete installiert sind:
 pip install requests
 ```
 
+Für Umgebungen mit interner CA (z. B. Firmennetzwerk):
+```bash
+pip install truststore
+```
+
 ## Verwendung
 
-### Umgebungsvariable setzen (optional)
+### Umgebungsvariablen setzen (optional)
 
-Um den API-Token nicht jedes Mal eingeben zu müssen, kannst du ihn als Umgebungsvariable setzen:
-
+**API-Token** (um nicht jedes Mal eingeben zu müssen):
 ```bash
 export CONFLUENCE_TOKEN="dein_api_token_hier"
+```
+
+**System-Zertifikate verwenden** (für interne CAs):
+```bash
+# Option 1: truststore verwenden (Python 3.10+, empfohlen)
+export USE_SYSTEM_CA=1
+
+# Option 2: Eigenes CA-Bundle angeben
+export REQUESTS_CA_BUNDLE=/path/to/ca-bundle.crt
 ```
 
 ### Grundlegende Verwendung
 
 ```bash
 # Einfacher Export (Page ID ist erforderlich)
-python bin/export_confluence_html.py 244744731
+python export_confluence_html.py 244744731
 
 # Mit eigenem Ausgabedateiname
-python bin/export_confluence_html.py 244744731 meine_seite.html
+python export_confluence_html.py 244744731 meine_seite.html
 
 # Mit anderer Confluence-Instanz
-python bin/export_confluence_html.py 244744731 meine_seite.html https://confluence.example.com
+python export_confluence_html.py 244744731 meine_seite.html https://confluence.example.com
+
+# Mit system Zertifikaten (für interne CAs)
+USE_SYSTEM_CA=1 python export_confluence_html.py 244744731
 ```
 
 ### Parameter
@@ -42,12 +58,13 @@ python bin/export_confluence_html.py 244744731 meine_seite.html https://confluen
 ### Hilfe anzeigen
 
 ```bash
-python bin/export_confluence_html.py --help
+python export_confluence_html.py --help
 ```
 
 ## Beispielausgabe
 
 ```
+Using system CA certificate store
 Fetching page 244744731 from https://confluence.oediv.lan...
 
 ✅ Successfully exported Confluence page!
@@ -64,8 +81,37 @@ Fetching page 244744731 from https://confluence.oediv.lan...
 - Das HTML kann direkt für die Debugging des Markdown Converters verwendet werden
 - Bei Authentifizierungsfehlern prüfe den API-Token und die Berechtigungen
 
+## System-Zertifikate (Interne CA)
+
+Für Firmennetzwerke mit eigener Certificate Authority:
+
+1. **truststore installieren** (empfohlen):
+   ```bash
+   pip install truststore
+   ```
+
+2. **Umgebungsvariable setzen**:
+   ```bash
+   export USE_SYSTEM_CA=1
+   ```
+
+3. **Oder alternativ CA-Bundle angeben**:
+   ```bash
+   # Finde das System-CA-Bundle
+   # Ubuntu/Debian: /etc/ssl/certs/ca-certificates.crt
+   # RHEL/CentOS: /etc/pki/tls/certs/ca-bundle.crt
+   export REQUESTS_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt
+   ```
+
+   Die `truststore` Methode ist besser, weil:
+   - Sie nutzt das native Betriebssystem-Zertifikatspeicher
+   - Funktioniert automatisch mit System-Updates
+   - Unterstützt macOS, Windows und Linux
+   - Kein manuelles CA-Bundle Management nötig
+
 ## Fehlerbehandlung
 
 - **401**: Ungültiger API-Token oder fehlende Berechtigungen
 - **404**: Seite existiert nicht oder du hast keinen Zugriff
+- **SSL Errors**: Prüfe System-CA-Konfiguration oder setze `verify_ssl=False` (unsicher!)
 - **Timeout**: Netzwerk- oder Verbindungsprobleme zur Confluence-Instanz

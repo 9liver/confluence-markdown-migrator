@@ -919,6 +919,38 @@ The exporter architecture (AttachmentManager, LinkRewriter, IndexGenerator) prov
    - Target system settings (Wiki.js and/or BookStack)
    - Export preferences
 
+### System Certificates (Corporate/Internal CAs)
+
+If your Confluence server uses a certificate signed by an internal Certificate Authority (common in corporate environments), you need to configure Python to use system certificates:
+
+**Option 1: Use System Certificate Store (Recommended)**
+
+```bash
+# Install truststore support (optional, already in requirements.txt)
+pip install truststore
+
+# Enable system certificate usage
+export USE_SYSTEM_CA=1
+
+# Run any command with system CA support
+USE_SYSTEM_CA=1 python migrate.py --config config.yaml
+```
+
+**Option 2: Specify Custom CA Bundle**
+
+```bash
+# For Ubuntu/Debian
+export REQUESTS_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt
+
+# For RHEL/CentOS
+export REQUESTS_CA_BUNDLE=/etc/pki/tls/certs/ca-bundle.crt
+
+# Then run your command
+python migrate.py --config config.yaml
+```
+
+See [docs/SYSTEM_CERTIFICATES.md](docs/SYSTEM_CERTIFICATES.md) for detailed configuration and troubleshooting.
+
 ## Configuration
 
 The configuration file (`config.yaml`) supports extensive customization. Key sections:

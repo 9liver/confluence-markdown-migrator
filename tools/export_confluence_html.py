@@ -4,6 +4,10 @@ Export Confluence page as raw HTML for debugging markdown converter.
 
 This script fetches a Confluence page using the REST API and saves the raw HTML
 (export_view) to a file for analysis and debugging purposes.
+
+For environments with internal CAs, you can use system certificates by either:
+- Setting USE_SYSTEM_CA=1 environment variable
+- Or setting REQUESTS_CA_BUNDLE environment variable to your CA bundle path
 """
 
 import sys
@@ -11,6 +15,18 @@ import os
 import requests
 from pathlib import Path
 from urllib.parse import urljoin
+
+# Optional: Use system CA certificates if requested
+try:
+    if os.getenv('USE_SYSTEM_CA') in ('1', 'true', 'True', 'TRUE'):
+        import truststore
+        truststore.inject_into_ssl()
+        print("Using system CA certificate store")
+except ImportError:
+    if os.getenv('USE_SYSTEM_CA'):
+        print("Warning: truststore not installed. Install with: pip install truststore")
+except Exception:
+    pass  # Silently continue if truststore fails
 
 
 def fetch_confluence_html(page_id, confluence_url, token):
@@ -56,11 +72,15 @@ def main():
         print("  output_file      Output filename (optional, default: raw_html_<page_id>.html)")
         print("  confluence_url   Confluence base URL (optional, default: https://confluence.oediv.lan)")
         print("\nEnvironment Variables:")
-        print("  CONFLUENCE_TOKEN API token for authentication (will prompt if not set)")
+        print("  CONFLUENCE_TOKEN    API token for authentication (will prompt if not set)")
+        print("  USE_SYSTEM_CA=1     Use system CA certificates (for internal CAs)")
+        print("  REQUESTS_CA_BUNDLE  Path to custom CA bundle file (alternative to USE_SYSTEM_CA)")
         print("\nExamples:")
         print("  python export_confluence_html.py 244744731")
         print("  python export_confluence_html.py 244744731 my_page.html")
         print("  python export_confluence_html.py 244744731 my_page.html https://confluence.example.com")
+        print("  USE_SYSTEM_CA=1 python export_confluence_html.py 244744731")
+        print("\nFor internal CAs, install: pip install truststore")
         return 0
     
     # Parse arguments

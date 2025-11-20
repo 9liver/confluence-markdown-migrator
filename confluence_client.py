@@ -2,6 +2,7 @@
 
 import json
 import logging
+import os
 import time
 import warnings
 from typing import Any, Dict, List, Optional, Tuple, Union
@@ -11,6 +12,18 @@ import requests
 import urllib3
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
+
+# Optional: Use system CA certificates if requested
+try:
+    if os.getenv('USE_SYSTEM_CA') in ('1', 'true', 'True', 'TRUE'):
+        import truststore
+        truststore.inject_into_ssl()
+        logger.info("Using system CA certificate store")
+except ImportError:
+    if os.getenv('USE_SYSTEM_CA'):
+        logger.warning("truststore not installed. Install with: pip install truststore")
+except Exception as e:
+    logger.warning(f"Could not enable system CA store: {e}")
 
 logger = logging.getLogger('confluence_markdown_migrator.client')
 
