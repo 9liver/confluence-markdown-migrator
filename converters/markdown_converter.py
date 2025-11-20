@@ -504,6 +504,10 @@ class MarkdownConverter(MarkdownifyConverter):
         # Decode HTML entities (e.g., &amp; -> &, &lt; -> <)
         markdown = html.unescape(markdown)
 
+        # Fix missing spaces between adjacent inline code spans
+        # Pattern: `code1``code2` should be `code1` `code2`
+        markdown = re.sub(r'`([^`]+)`([a-zA-ZäöüßÄÖÜ])', r'`\1` \2', markdown)
+
         # Remove trailing whitespace from lines
         lines = [line.rstrip() for line in markdown.split('\n')]
 
@@ -1045,19 +1049,29 @@ class MarkdownConverter(MarkdownifyConverter):
     def convert_table(self, el, text, parent_tags=None, **kwargs):
         """Convert table to markdown with proper spacing."""
         from markdownify import markdownify
-        
+
         # Use parent converter but ensure proper spacing
         table_markdown = super().convert_table(el, text, parent_tags, **kwargs)
-        
+
         # Ensure table is separated from surrounding text with blank lines
         if table_markdown.strip():
             if not table_markdown.startswith('\n\n'):
                 table_markdown = '\n\n' + table_markdown
             if not table_markdown.endswith('\n'):
                 table_markdown += '\n\n'
-        
+
         return table_markdown
-    
+
+    def convert_td(self, el, text, parent_tags=None, **kwargs):
+        """Convert table data cell with special handling for code blocks and line breaks."""
+        # Use custom cell text extraction that preserves formatting
+        return ' ' + self._get_cell_text(el) + ' '
+
+    def convert_th(self, el, text, parent_tags=None, **kwargs):
+        """Convert table header cell with special handling for code blocks and line breaks."""
+        # Use custom cell text extraction that preserves formatting
+        return ' ' + self._get_cell_text(el) + ' '
+
     def _get_comment_prefix(self, language: str) -> str:
         """Get the appropriate comment prefix for a programming language."""
         if not language:
@@ -1073,10 +1087,13 @@ class MarkdownConverter(MarkdownifyConverter):
     
     def convert_pre(self, el, text, parent_tags=None, **kwargs):
         """Handle pre elements, especially for code blocks."""
+        # Check if we're in a list context (affects trailing newlines)
+        in_list_context = kwargs.get('in_list_context', False)
+
         # Check for syntaxhighlighter params
         params = el.get('data-syntaxhighlighter-params', '')
         header = el.get('data-code-header', '')
-        
+
         # Check for code child element
         code_el = el.find('code')
         if code_el:
@@ -1087,31 +1104,40 @@ class MarkdownConverter(MarkdownifyConverter):
             language = self._parse_syntaxhighlighter_language(params) if params else ''
             # ENHANCED: Get text from el itself if no code child
             code_text = el.get_text() if el.get_text().strip() else text
-        
+
         # ENHANCED: Add validation and logging
         if not code_text or not code_text.strip():
             self.logger.warning(f"Empty code block detected in pre element")
             # Try one more fallback: get all text from element
             code_text = ''.join(el.stripped_strings)
-        
-        # Format the code block with proper language
+
+        # Format the code block with header inside if present
         code_text_stripped = code_text.rstrip('\n')
-        if language and language != 'text':
-            fenced_code = f"```{language}\n{code_text_stripped}\n```\n\n"
-        else:
-            fenced_code = f"```\n{code_text_stripped}\n```\n\n"
-        
-        # Add header if present - use language-appropriate comment prefix
+
+        # If header is present, add it as a comment INSIDE the code block
         if header:
             comment_prefix = self._get_comment_prefix(language)
-            # For block comments (CSS, HTML, etc.), we need to handle closing
+            # Format header as code comment
             if comment_prefix == '/*':
-                return f"{comment_prefix} {header} */\n\n{fenced_code}"
+                header_line = f"{comment_prefix} {header} */"
             elif comment_prefix == '<!--':
-                return f"{comment_prefix} {header} -->\n\n{fenced_code}"
+                header_line = f"{comment_prefix} {header} -->"
             else:
-                return f"{comment_prefix} {header}\n\n{fenced_code}"
-        
+                # For line comments, add the header as: # filename
+                header_line = f"{comment_prefix} {header}"
+
+            # Prepend header to code content
+            code_text_stripped = f"{header_line}\n{code_text_stripped}"
+
+        # Adjust trailing newlines based on context
+        trailing = '\n' if in_list_context else '\n\n'
+
+        # Format with appropriate language
+        if language and language != 'text':
+            fenced_code = f"```{language}\n{code_text_stripped}\n```{trailing}"
+        else:
+            fenced_code = f"```\n{code_text_stripped}\n```{trailing}"
+
         return fenced_code
     
     def convert_div(self, el, text, parent_tags=None, **kwargs):
@@ -1189,68 +1215,89 @@ class MarkdownConverter(MarkdownifyConverter):
             return self.convert_ol(el, '', depth=depth)
         return ''
     
+    def _indent_block_for_list(self, block: str, indent_level: int = 1) -> str:
+        """Indent a markdown block (like code fences) to nest properly within a list item.
+
+        Args:
+            block: The markdown block to indent
+            indent_level: Number of indentation levels (each level = 3 spaces for proper nesting)
+
+        Returns:
+            Indented block with blank line before it
+        """
+        indent = '   ' * indent_level  # 3 spaces per level for list continuation
+        lines = block.rstrip('\n').split('\n')
+        indented_lines = [indent + line if line.strip() else '' for line in lines]
+        # Add blank line before code block for proper separation
+        return '\n' + '\n'.join(indented_lines)
+
     def _process_list_item_content(self, li, depth):
         """Process content within a list item, handling block-level and inline elements."""
-        from bs4 import BeautifulSoup
-        
-        # Convert the li element to HTML and process it
-        li_html = str(li)
-        li_soup = BeautifulSoup(li_html, 'lxml')
-        li_tag = li_soup.find('li')
-        
-        parts = []
+        inline_parts = []  # Text and inline elements
+        block_parts = []   # Code blocks, blockquotes, etc.
         nested_list_content = ''
-        
-        for child in li_tag.children:
+
+        # Process children of the li element directly (no re-parsing to preserve attributes)
+        for child in li.children:
             if not hasattr(child, 'name') or child.name is None:
                 # Text node
                 text = str(child).strip()
                 if text:
-                    parts.append(text)
+                    inline_parts.append(text)
             elif child.name in ['ul', 'ol']:
                 # Nested lists - handle separately
-                nested_list_content = '\n' + self._convert_nested_list(child, depth + 1)
+                nested_list_content = '\n' + self._convert_nested_list(child, depth)
             elif child.name in ['p', 'span', 'strong', 'em', 'b', 'i', 'code', 'a']:
                 # Inline elements - convert recursively
                 child_html = str(child)
                 child_md = self.convert(child_html)
                 if child_md:
-                    parts.append(child_md.strip())
+                    inline_parts.append(child_md.strip())
             elif child.name == 'pre':
-                # ENHANCED: Direct pre element handling
-                pre_md = self.convert_pre(child, child.get_text())
+                # Code block - needs special indentation
+                pre_md = self.convert_pre(child, child.get_text(), in_list_context=True)
                 if pre_md:
-                    parts.append(pre_md.strip())
+                    # Indent the code block to nest under the list item
+                    indented_code = self._indent_block_for_list(pre_md.rstrip())
+                    block_parts.append(indented_code)
             elif child.name == 'div':
                 # Check if it's a code panel
                 classes = child.get('class', [])
                 is_code_panel = any('code' in str(cls) for cls in classes) and any('panel' in str(cls) for cls in classes)
-                
+
                 if is_code_panel or child.find('pre'):
-                    # ENHANCED: Code block - convert with proper handling
+                    # Code block - needs special indentation
                     pre_elem = child.find('pre')
                     if pre_elem:
-                        pre_md = self.convert_pre(pre_elem, pre_elem.get_text())
+                        pre_md = self.convert_pre(pre_elem, pre_elem.get_text(), in_list_context=True)
                         if pre_md:
-                            parts.append(pre_md.strip())
+                            # Indent the code block to nest under the list item
+                            indented_code = self._indent_block_for_list(pre_md.rstrip())
+                            block_parts.append(indented_code)
                     else:
                         # Fallback to regular conversion
                         child_md = self.convert(str(child))
                         if child_md:
-                            parts.append(child_md.strip())
+                            inline_parts.append(child_md.strip())
                 else:
                     # Regular div - convert content
                     child_md = self.convert(str(child))
                     if child_md:
-                        parts.append(child_md.strip())
+                        inline_parts.append(child_md.strip())
             elif child.name == 'blockquote':
-                # Blockquote - convert recursively
+                # Blockquote - needs special indentation
                 child_md = self.convert(str(child))
                 if child_md:
-                    parts.append(child_md.strip())
-        
-        # Join parts with double newlines for paragraph separation
-        content = '\n\n'.join(parts)  # FIXED: was '\\\\n\\n'
+                    indented_quote = self._indent_block_for_list(child_md.strip())
+                    block_parts.append(indented_quote)
+
+        # Build final content: inline parts as single line, then block parts
+        content = ' '.join(inline_parts) if inline_parts else ''
+
+        # Add block-level elements (code blocks, blockquotes)
+        for block in block_parts:
+            content += block
+
         # Append nested list content if any
         if nested_list_content:
             content += nested_list_content
