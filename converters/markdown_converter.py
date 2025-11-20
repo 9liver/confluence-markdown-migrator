@@ -1066,10 +1066,11 @@ class MarkdownConverter(MarkdownifyConverter):
             code_text = text
         
         # Format the code block with proper language
+        code_text_stripped = code_text.rstrip('\n')
         if language and language != 'text':
-            fenced_code = f"```{language}\n{code_text.rstrip('\n')}\n```\n\n"
+            fenced_code = f"```{language}\n{code_text_stripped}\n```\n\n"
         else:
-            fenced_code = f"```\n{code_text.rstrip('\n')}\n```\n\n"
+            fenced_code = f"```\n{code_text_stripped}\n```\n\n"
         
         # Add header if present - use language-appropriate comment prefix
         if header:
