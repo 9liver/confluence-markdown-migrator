@@ -67,6 +67,102 @@ class MarkdownConverter(MarkdownifyConverter):
     - Metadata tracking
     """
     
+    # Language to comment prefix mapping
+    LANGUAGE_COMMENT_MAP = {
+        # Shell/scripting languages
+        'bash': '#',
+        'sh': '#',
+        'shell': '#',
+        'zsh': '#',
+        'ksh': '#',
+        'csh': '#',
+        'tcsh': '#',
+        'fish': '#',
+        'powershell': '#',
+        'ps1': '#',
+        'cmd': 'rem',
+        'batch': 'rem',
+        
+        # Configuration formats
+        'yaml': '#',
+        'yml': '#',
+        'ini': ';',
+        'toml': '#',
+        'properties': '#',
+        'config': '#',
+        'conf': '#',
+        'env': '#',
+        'dockerfile': '#',
+        
+        # Other formats that use #
+        'python': '#',
+        'ruby': '#',
+        'r': '#',
+        'rscript': '#',
+        'make': '#',
+        'cmake': '#',
+        'perl': '#',
+        'pl': '#',
+        'docker': '#',
+        'terraform': '#',
+        'hcl': '#',
+        
+        # Languages that use different comment styles
+        'javascript': '//',
+        'js': '//',
+        'typescript': '//',
+        'ts': '//',
+        'jsx': '//',
+        'tsx': '//',
+        'css': '/*',
+        'scss': '//',
+        'sass': '//',
+        'less': '//',
+        'java': '//',
+        'c': '//',
+        'cpp': '//',
+        'c++': '//',
+        'cc': '//',
+        'cxx': '//',
+        'h': '//',
+        'hpp': '//',
+        'csharp': '//',
+        'cs': '//',
+        'go': '//',
+        'golang': '//',
+        'swift': '//',
+        'php': '//',
+        'kotlin': '//',
+        'kt': '//',
+        'scala': '//',
+        'groovy': '//',
+        'rust': '//',
+        'rs': '//',
+        'objectivec': '//',
+        'objc': '//',
+        'dart': '//',
+        'elixir': '#',
+        'erlang': '%',
+        'matlab': '%',
+        'sql': '--',
+        'mysql': '--',
+        'postgresql': '--',
+        'sqlite': '--',
+        'plsql': '--',
+        'tsql': '--',
+        'html': '<!--',
+        'xml': '<!--',
+        'xhtml': '<!--',
+        'svg': '<!--',
+        'text': '#',
+        'plain': '#',
+        'markdown': '#',
+        'md': '#',
+        'json': '#',
+        'diff': '#',
+        'patch': '#',
+    }
+    
     def __init__(self, logger: logging.Logger = None, config: Dict[str, Any] = None, **kwargs):
         """Initialize markdown converter with logger and configuration."""
         # Setup converter options
@@ -159,7 +255,7 @@ class MarkdownConverter(MarkdownifyConverter):
             self.logger.error(f"Conversion failed for page {page.id}: {str(e)}")
             self._update_failed_conversion_metadata(page, str(e))
             return False
-    
+
     def convert_standalone_html(self, html_content: str, format_type: str = 'export') -> str:
         """Convert standalone HTML string to markdown (not part of markdownify pipeline)."""
         self.logger.debug("Converting HTML to markdown")
@@ -224,22 +320,31 @@ class MarkdownConverter(MarkdownifyConverter):
     
     def _pre_process_html(self, soup: BeautifulSoup) -> None:
         """Pre-process HTML to handle edge cases before markdown conversion."""
-        # Find and process code panel divs
-        self._process_code_panels(soup)
+        # Find and process code panel divs that weren't handled by macros
+        # Only process panels without data-macro-name
+        self._process_remaining_code_panels(soup)
+        # Preprocess content-by-label lists
+        # Note: This is a stub - content by label conversion is handled elsewhere
+        pass
     
-    def _process_code_panels(self, soup: BeautifulSoup) -> None:
-        """Process code panel divs to ensure proper code block conversion."""
+    def _process_remaining_code_panels(self, soup: BeautifulSoup) -> None:
+        """Process code panel divs that weren't handled by MacroHandler."""
         for div in soup.find_all('div', class_=True):
+            # Skip if this was already processed by MacroHandler
+            if div.get('data-macro-name'):
+                continue
+                
             classes = div.get('class', [])
             has_code = any(cls == 'code' for cls in classes)
             has_panel = any(cls == 'panel' or cls == 'pdl' for cls in classes)
             
             if has_code and has_panel:
-                # Check if this already has a pre element with proper structure
-                pre_elem = div.find('pre')
-                if pre_elem and pre_elem.find('code'):
-                    # Already properly structured
-                    continue
+                # Extract header if present
+                header_elem = div.find(class_='codeHeader') or div.find(class_='panelHeader')
+                header_text = ''
+                if header_elem:
+                    header_text = header_elem.get_text(strip=True)
+                    header_elem.decompose()
                 
                 # Ensure the pre element has a code child
                 pre_elem = div.find('pre')
@@ -248,27 +353,26 @@ class MarkdownConverter(MarkdownifyConverter):
                     code_elem.string = pre_elem.get_text()
                     pre_elem.clear()
                     pre_elem.append(code_elem)
+                
+                # Store header text in data attribute for later use
+                if pre_elem and header_text:
+                    pre_elem['data-code-header'] = header_text
+                
+                # Unwrap the div - keep the pre>code structure
+                div.unwrap()
     
-    def _convert_emoticon(self, img):
-        """Convert an emoticon img to !(name) text format."""
-        src = img.get('src', '')
-        alt = img.get('alt', '')
+    def _get_comment_prefix(self, language: str) -> str:
+        """Get the appropriate comment prefix for a programming language."""
+        if not language:
+            return '#'
         
-        # Extract emoticon name from src
-        emoticon_name = ''
-        if src:
-            match = re.search(r'/([^/]+)\.(?:svg|png|gif)$', src)
-            if match:
-                emoticon_name = match.group(1)
-        elif alt:
-            # Try to extract from alt text like "(smile)"
-            match = re.search(r'\(([^)]+)\)', alt)
-            if match:
-                emoticon_name = match.group(1)
+        # Look up in the language map
+        prefix = self.LANGUAGE_COMMENT_MAP.get(language.lower())
+        if prefix:
+            return prefix
         
-        # Use standardized !(name) format
-        replacement = f'!({emoticon_name or alt or "emoticon"})'
-        img.replace_with(replacement)
+        # Default to '#' for unknown languages
+        return '#'
     
     def _post_process_markdown(self, markdown: str, page: Any) -> str:
         """Apply post-processing to generated markdown."""
@@ -290,6 +394,9 @@ class MarkdownConverter(MarkdownifyConverter):
         markdown = self._normalize_tables(markdown)
         markdown = self._normalize_lists(markdown)
         markdown = self._preserve_code_blocks(markdown)
+        
+        # Preserve anchors from confluence-anchor-link spans
+        markdown = self._preserve_anchors(markdown)
 
         # Convert callouts to admonition syntax BEFORE indentation
         if self.target_wiki in ['wikijs', 'both']:
@@ -297,187 +404,7 @@ class MarkdownConverter(MarkdownifyConverter):
 
         # Indent code blocks that are part of list items
         markdown = self._indent_code_blocks_in_lists(markdown)
-
-        # Final cleanup - remove excessive blank lines
-        markdown = self._final_cleanup(markdown)
-
-        # Process links and store stats
-        if self.link_processor:
-            markdown, link_stats = self.link_processor.process_links(markdown, page)
-            self._last_link_stats = link_stats  # Store for later use
-
-        # Strip remaining HTML tags if strict_markdown is enabled
-        if self.strict_markdown:
-            markdown = self._strip_remaining_html_tags(markdown)
-
         return markdown
-
-    def _final_cleanup(self, markdown: str) -> str:
-        """Final cleanup pass - remove excessive blank lines."""
-        # Replace 3+ consecutive newlines with 2 newlines
-        while '\n\n\n' in markdown:
-            markdown = markdown.replace('\n\n\n', '\n\n')
-
-        # Fix sub-list indentation (2 spaces -> 3 spaces for consistency)
-        lines = markdown.split('\n')
-        result = []
-        for line in lines:
-            # Check for sub-list items with 2-space indent
-            if re.match(r'^  \d+\.\s+', line):
-                line = ' ' + line  # Add one more space
-            result.append(line)
-
-        return '\n'.join(result)
-
-    def _strip_remaining_html_tags(self, markdown: str) -> str:
-        """Strip remaining HTML tags from markdown using conservative allowlist."""
-        import re
-        
-        # Define safe tags that can be kept in markdown
-        safe_tags = ['details', 'summary']
-        
-        # Pattern to match HTML tags (including closing tags)
-        # This will match <tag> or </tag> patterns
-        html_pattern = re.compile(r'<\/?([^\s>]+)[^>]*>', re.IGNORECASE)
-        
-        def replace_tag(match):
-            tag_name = match.group(1).lower()
-            # Keep safe tags, remove others
-            if tag_name in safe_tags:
-                return match.group(0)
-            return ''
-        
-        return html_pattern.sub(replace_tag, markdown)
-
-    def _indent_code_blocks_in_lists(self, markdown: str) -> str:
-        """Indent content that follows list items to keep them part of the list."""
-        lines = markdown.split('\n')
-        result = []
-        current_indent = 0
-        in_list = False
-        in_code_block = False
-
-        i = 0
-        while i < len(lines):
-            line = lines[i]
-
-            # Track code block state (for non-list context)
-            if line.strip().startswith('```') and not in_list:
-                in_code_block = not in_code_block
-
-            # Check if this is a list item
-            list_match = re.match(r'^(\s*)([-*]|\d+\.)\s+', line)
-            if list_match:
-                in_list = True
-                indent_spaces = len(list_match.group(1))
-                # Calculate indent for content under this list item
-                current_indent = indent_spaces + 3
-                result.append(line)
-                i += 1
-                continue
-
-            # If we're in a list context, indent various content types
-            if in_list and current_indent > 0 and not in_code_block:
-                indent = ' ' * current_indent
-                stripped = line.strip()
-
-                # Check if this line should end the list context
-                if stripped and not stripped.startswith('>') and not stripped.startswith('```') and not stripped.startswith('**'):
-                    # Check if it's a new top-level list item or non-list content
-                    if re.match(r'^\d+\.\s+', stripped) and not line.startswith(' '):
-                        # New top-level list item
-                        in_list = False
-                        current_indent = 0
-                        result.append(line)
-                        i += 1
-                        continue
-
-                # Handle code blocks
-                if stripped.startswith('```'):
-                    # Add blank line before if needed
-                    if result and result[-1].strip():
-                        result.append('')
-
-                    # Indent the opening fence
-                    result.append(indent + stripped)
-                    i += 1
-
-                    # Indent all lines until closing fence
-                    while i < len(lines):
-                        code_line = lines[i]
-                        if code_line.strip().startswith('```'):
-                            result.append(indent + code_line.strip())
-                            i += 1
-                            break
-                        else:
-                            result.append(indent + code_line)
-                            i += 1
-                    continue
-
-                # Handle blockquotes
-                elif stripped.startswith('>'):
-                    # Indent blockquote
-                    if result and result[-1].strip():
-                        result.append('')
-                    result.append(indent + stripped)
-                    i += 1
-
-                    # Continue indenting blockquote lines
-                    while i < len(lines) and lines[i].strip().startswith('>'):
-                        result.append(indent + lines[i].strip())
-                        i += 1
-                    continue
-
-                # Handle bold titles (like **~/.profile**)
-                elif stripped.startswith('**') and stripped.endswith('**'):
-                    if result and result[-1].strip():
-                        result.append('')
-                    result.append(indent + stripped)
-                    i += 1
-                    continue
-
-                # Empty lines - keep them but don't break list context yet
-                elif not stripped:
-                    result.append('')
-                    i += 1
-                    continue
-
-            result.append(line)
-            i += 1
-
-        return '\n'.join(result)
-    
-    def _normalize_headings(self, markdown: str) -> str:
-        """Ensure proper heading hierarchy starting from H1."""
-        import re
-        lines = markdown.split('\n')
-        min_heading_level = None
-        
-        # Find the minimum heading level (smallest # count, but > 0)
-        for line in lines:
-            if line.startswith('#'):
-                level = len(line) - len(line.lstrip('#'))
-                if min_heading_level is None or level < min_heading_level:
-                    min_heading_level = level
-        
-        # Adjust to start from H1 if minimum is > 1
-        if min_heading_level is not None and min_heading_level > 1:
-            adjustment = 1 - min_heading_level
-            markdown = self._apply_heading_offset(markdown, adjustment)
-        
-        return markdown
-    
-    def _apply_heading_offset(self, markdown: str, offset: int) -> str:
-        """Apply offset to all heading levels."""
-        import re
-        def replace_heading(match):
-            heading_mark = match.group(1)
-            level = len(heading_mark)
-            new_level = max(1, min(6, level + offset))  # Keep within H1-H6
-            return '#' * new_level + match.group(2)
-        
-        heading_pattern = re.compile(r'^(#+)(\s+.*)$', re.MULTILINE)
-        return heading_pattern.sub(replace_heading, markdown)
     
     def _clean_markdown(self, markdown: str) -> str:
         """Clean up markdown formatting issues."""
@@ -541,19 +468,20 @@ class MarkdownConverter(MarkdownifyConverter):
         import re
         
         # Enhanced pattern to match blockquotes with callout class markers OR data-callout attributes
+        # Also handles nested content better
         pattern = re.compile(
-            r'(> \{\.is-(info|warning|success|danger)\}\n)?'  # Optional class marker
-            r'(> \[data-callout=(info|warning|success|danger)\]\n)?'  # Optional data attribute marker
-            r'> \*\*([^*]+)\*\*\n'  # Title line
-            r'(>\n)*'  # Optional empty blockquote lines
-            r'((?:> [^>].*\n?)*)'  # Content lines (non-greedy)
+            r'(?:> \{\.is-(info|warning|success|danger)\}\n)?'  # Optional class marker
+            r'(?:> \[data-callout=(info|warning|success|danger)\]\n)?'  # Optional data attribute marker
+            r'> \*\*([^*].*?)\*\*\n'  # Title line (non-greedy)
+            r'(?:(?:>\s*\n)*)'  # Optional empty blockquote lines
+            r'((?:> [^>].*(?:\n|$))*)'  # Content lines (non-greedy)
         )
         
         def replace_admonition(match):
             # Determine callout type (from class, data attribute, or infer from title)
-            callout_type = match.group(2) or match.group(4)
-            title = match.group(5)
-            content = match.group(7) or ''
+            callout_type = match.group(1) or match.group(2)
+            title = match.group(3) or 'Info'
+            content = match.group(4) or ''
             
             # Map title to callout type if not already set
             if not callout_type:
@@ -562,8 +490,8 @@ class MarkdownConverter(MarkdownifyConverter):
                     callout_type = 'info'
                 elif 'warn' in title_lower:
                     callout_type = 'warning'
-                elif 'tip' in title_lower or 'success' in title_lower:
-                    callout_type = 'info'  # Wiki.js uses [!info] for tips
+                elif 'tip' in title_lower or 'success' in title_lower or 'note' in title_lower:
+                    callout_type = 'info'  # Wiki.js uses [!info] for tips and notes
                 else:
                     callout_type = 'info'
             
@@ -580,18 +508,27 @@ class MarkdownConverter(MarkdownifyConverter):
             # Format the admonition
             result = f"> {admon_type} {title}\n"
             if content:
-                # Add content lines, ensuring they're properly prefixed
+                # Add content lines, ensuring they're properly indented
                 content_lines = content.split('\n')
                 for line in content_lines:
-                    if line.strip():
-                        result += f"> {line[2:]}\n"  # Remove '> ' prefix and re-add
-                    else:
-                        result += ">\n"
+                    line_strip = line.strip()
+                    if line_strip:
+                        if line.startswith('> '):
+                            result += f"> {line[2:]}\n"  # Remove '> ' prefix
+                        else:
+                            result += f"> {line_strip}\n"
+                    # Don't add empty lines as they break list continuation
             
             return result + "\n"
         
-        # Apply the transformation
-        return pattern.sub(replace_admonition, markdown)
+        # Apply the transformation repeatedly to handle all matches
+        previous_markdown = ''
+        current_markdown = markdown
+        while previous_markdown != current_markdown:
+            previous_markdown = current_markdown
+            current_markdown = pattern.sub(replace_admonition, current_markdown)
+        
+        return current_markdown
 
     def _convert_blockquote_to_admonition(self, el) -> str:
         """Convert blockquote element to admonition syntax during HTML conversion."""
@@ -605,52 +542,49 @@ class MarkdownConverter(MarkdownifyConverter):
                     callout_type = cls[3:]  # Remove 'is-' prefix
                     break
         
-        # Extract content
-        content = self._get_text_content(el)
-        lines = content.split('\n')
-        
-        # Extract title (first bold line)
-        title = "Info"  # Default
-        content_start = 0
-        
-        for i, line in enumerate(lines):
-            if line.strip().startswith('**') and line.strip().endswith('**'):
-                title = line.strip().strip('*')
-                content_start = i + 1
-                break
-        
-        # Get remaining content
-        body_content = '\n'.join(lines[content_start:]).strip()
+        # Use markdownify for content, then wrap in admonition
+        from bs4 import BeautifulSoup
         
         if callout_type:
-            # Use Wiki.js admonition syntax
-            admon_map = {
+            # Map to Wiki.js admonition syntax
+            admonition_map = {
                 'info': '[!info]',
                 'warning': '[!warning]',
                 'success': '[!info]',
                 'danger': '[!warning]'
             }
-            admon_type = admon_map.get(callout_type, '[!info]')
+            admon_type = admonition_map.get(callout_type, '[!info]')
             
-            result = f"> {admon_type} {title}\n"
-            if body_content:
-                result += f">\n"
-                for line in body_content.split('\n'):
-                    if line.strip():
-                        result += f"> {line}\n"
-                    else:
-                        result += ">\n"
-            return result + '\n'
+            # Get inner content as markdown
+            content_html = ''.join(str(child) for child in el.children)
+            if content_html:
+                content_soup = BeautifulSoup(content_html, 'lxml')
+                # Process it recursively with our converter
+                content = self.convert(str(content_soup))
+            else:
+                content = ''
+            
+            # Build the admonition
+            result = f"> {admon_type}\n"
+            if content:
+                content_lines = content.strip().split('\n')
+                for line in content_lines:
+                    result += f"> {line}\n"
+            result += "\n"
+            return result
         else:
             # Regular blockquote
-            result = ''
-            for line in lines:
-                if line.strip():
+            content = ''.join(str(child) for child in el.children)
+            if content:
+                content_soup = BeautifulSoup(content, 'lxml')
+                content_md = self.convert(str(content_soup))
+                result = ""
+                for line in content_md.strip().split('\n'):
                     result += f"> {line}\n"
-                else:
-                    result += ">\n"
-            return result + '\n'
-
+                return result + "\n"
+            else:
+                return "\n"
+    
     def _get_text_content(self, el):
         """Extract text content from element, preserving some structure."""
         from bs4 import BeautifulSoup
@@ -756,28 +690,26 @@ class MarkdownConverter(MarkdownifyConverter):
         return table_pattern.sub(normalize_table, markdown)
     
     def _normalize_lists(self, markdown: str) -> str:
-        """Normalize list indentation and bullet characters."""
+        """Normalize list bullet characters while preserving indentation."""
         lines = markdown.split('\n')
         normalized_lines = []
-        list_stack = []  # Track nested list levels
         
         for line in lines:
             # Check if this is a list item
-            list_match = re.match(r'(\s*)([-*+]|[0-9]+\.)\s+(.*)', line)
+            list_match = re.match(r'([ \t]*)([-*+][ \t]+|\d+\.[ \t]+)(.*)', line)
             if list_match:
-                indent = len(list_match.group(1))
+                leading_spaces = list_match.group(1)
                 bullet = list_match.group(2)
                 content = list_match.group(3)
                 
                 # Normalize bullet to '-' for unordered, keep numbers for ordered
-                if bullet in ['*', '+']:
-                    bullet = '-'
+                if bullet.lstrip()[:1] in ['*', '+']:  # Check first non-space char
+                    # Replace first character with '-' but preserve spacing
+                    normalized_bullet = bullet.replace(bullet.lstrip()[:1], '-', 1)
+                else:
+                    normalized_bullet = bullet
                 
-                # Ensure proper indentation (2 spaces per level)
-                level = indent // 2
-                normalized_indent = '  ' * level
-                
-                normalized_line = f"{normalized_indent}{bullet} {content}"
+                normalized_line = f"{leading_spaces}{normalized_bullet}{content}"
                 normalized_lines.append(normalized_line)
             else:
                 normalized_lines.append(line)
@@ -809,7 +741,7 @@ class MarkdownConverter(MarkdownifyConverter):
             return block
         
         return code_block_pattern.sub(preserve_block, markdown)
-    
+
     # Custom markdownify converters
     def _get_cell_text(self, cell):
         """Extract text from a table cell, preserving line breaks and formatting code blocks."""
@@ -971,320 +903,202 @@ class MarkdownConverter(MarkdownifyConverter):
         for child in cell.children:
             result = process_element(child)
             if result:
-                parts.append(result)
-
-        # Join parts
-        text = ' '.join(parts)
-
-        # Clean up multiple spaces and normalize <br> tags
-        text = re.sub(r'\s+', ' ', text)
-        text = re.sub(r'\s*<br>\s*', '<br>', text)
-        text = re.sub(r'(<br>)+', '<br>', text)  # Collapse multiple <br>
-        text = text.strip()
-        text = text.strip('<br>')  # Remove leading/trailing <br>
-
-        # Escape pipe characters that would break table formatting
-        text = text.replace('|', '\\|')
-
-        # Add indicator for highlighted cells (e.g., green = done)
-        if highlight_color == 'green' or 'highlight-green' in ' '.join(cell_classes):
-            # If cell just says "DONE", make it bold
-            if text.upper().strip() == 'DONE':
-                text = '**DONE** ✓'
-            elif not text:
-                text = '✓'
-        elif highlight_color == 'red' or 'highlight-red' in ' '.join(cell_classes):
-            if not text:
-                text = '✗'
-        elif highlight_color == 'yellow' or 'highlight-yellow' in ' '.join(cell_classes):
-            if not text:
-                text = '⚠'
-
-        return text
-
-    def convert_table(self, el, text, parent_tags=None, **kwargs):
-        """Custom table converter to ensure proper markdown table syntax."""
-        from bs4 import BeautifulSoup
-
-        rows = el.find_all('tr')
-        if not rows:
-            return ''
-
-        # Extract header if present
-        header_cells = rows[0].find_all(['th', 'td'])
-        if not header_cells:
-            return ''
-
-        # Build table
-        markdown_rows = []
-
-        # Header row
-        header_row = '| ' + ' | '.join(self._get_cell_text(cell) for cell in header_cells) + ' |'
-        markdown_rows.append(header_row)
-
-        # Separator row
-        separator = '| ' + ' | '.join('---' for _ in header_cells) + ' |'
-        markdown_rows.append(separator)
-
-        # Data rows
-        for row in rows[1:]:
-            cells = row.find_all(['td', 'th'])
-            if cells:
-                data_row = '| ' + ' | '.join(self._get_cell_text(cell) for cell in cells) + ' |'
-                markdown_rows.append(data_row)
-
-        result = '\n'.join(markdown_rows) + '\n\n'
-        return result
-    
-    def convert_ol(self, el, text, parent_tags=None, **kwargs):
-        """Handle ordered lists."""
-        # Ensure proper spacing before and after lists
-        return '\n' + text + '\n'
-
-    def convert_ul(self, el, text, parent_tags=None, **kwargs):
-        """Handle unordered lists."""
-        # Ensure proper spacing before and after lists
-        return '\n' + text + '\n'
-
-    def convert_li(self, el, text, parent_tags=None, **kwargs):
-        """Handle list items with proper nesting."""
-        parent = el.parent
-        if not parent:
-            return text
-
-        # Determine nesting level by counting parent list elements
-        depth = 0
-        ancestor = el.parent
-        while ancestor:
-            if ancestor.name in ['ol', 'ul']:
-                depth += 1
-            ancestor = ancestor.parent
-        depth = max(0, depth - 1)  # Subtract 1 because we start from immediate parent
-
-        # Get item index within this list
-        siblings = [child for child in parent.children if hasattr(child, 'name') and child.name == 'li']
-        try:
-            index = siblings.index(el)
-        except ValueError:
-            index = 0
-
-        # Use 3 spaces per indentation level (standard for nested lists)
-        indent = '   ' * depth
-
-        # Determine bullet/number style
-        if parent.name == 'ol':
-            # Check for custom list type (alpha, roman, etc.)
-            list_type = parent.get('data-list-type')
-            if list_type:
-                # Use custom markers based on type
-                markers = ListTypeMarkers()
-                if list_type == 'lower-alpha':
-                    bullet = f'{markers.get_alpha_marker(index)}.'
-                elif list_type == 'upper-alpha':
-                    bullet = f'{markers.get_upper_alpha_marker(index)}.'
-                elif list_type == 'lower-roman':
-                    bullet = f'{markers.get_roman_marker(index)}.'
-                elif list_type == 'upper-roman':
-                    bullet = f'{markers.get_upper_roman_marker(index)}.'
+                # Don't add <br> elements to empty parts list
+                if result == '<br>':
+                    if parts:
+                        parts.append(result)
                 else:
-                    bullet = f'{index + 1}.'
-            else:
-                bullet = f'{index + 1}.'
-        else:
-            bullet = '-'
+                    parts.append(result)
 
-        # Clean up text - preserve internal newlines for nested content
-        text = text.strip()
-
-        # Handle nested lists - they should appear on new lines with proper indentation
-        # Check if this li contains nested lists
-        has_nested_list = el.find(['ol', 'ul'])
-        if has_nested_list:
-            # For items with nested lists, we need to combine the content properly
-            # The format is typically: "Text content\n\nnested list\n\n"
-            # We want to keep the text content as the list item label
-            # and preserve the nested list with its own formatting
-            
-            # Split into lines and filter out empty lines that separate the content
-            lines = text.split('\n')
-            result_lines = []
-            content_added = False
-            
-            for i, line in enumerate(lines):
-                is_empty = not line.strip()
-                is_list_marker = re.match(r'^\s*\d+\.', line) or re.match(r'^\s*[a-z]\.', line, re.IGNORECASE)
-                
-                if not content_added:
-                    # This is the main content of the list item (before the nested list)
-                    if is_empty:
-                        # Skip empty lines between content and nested list
-                        continue
-                    elif is_list_marker:
-                        # We've reached the nested list, add the main content bullet
-                        if result_lines:
-                            # Combine the accumulated content lines
-                            content = ' '.join(result_lines)
-                            line_with_bullet = f'{indent}{bullet} {content}'
-                        else:
-                            # Empty content
-                            line_with_bullet = f'{indent}{bullet} '
-                        
-                        final_lines = [line_with_bullet]
-                        # Add the remaining lines (the nested list)
-                        final_lines.extend(lines[i:])
-                        return '\n'.join(final_lines) + '\n'
-                    else:
-                        # Accumulate content lines
-                        result_lines.append(line)
-                
-            # If we get here without finding nested list markers, just use standard formatting
-            content = ' '.join(result_lines) if result_lines else ''
-            return f'{indent}{bullet} {content}\n{text}\n'
-        else:
-            return f'{indent}{bullet} {text}\n'
-
-    def convert_blockquote(self, el, text, parent_tags=None, **kwargs):
-        """Handle blockquotes, with special handling for callouts that should become admonitions."""
-        # Check for callout markers
-        callout_type = el.get('data-callout', '')
+        # Join all parts
+        full_text = ''.join(parts)
         
-        if not callout_type:
-            # Check for callout classes as fallback
-            classes = el.get('class', [])
-            for cls in classes:
-                if cls.startswith('is-'):
-                    callout_type = cls[3:]  # Remove 'is-' prefix
-                    break
+        # Clean up: normalize multiple <br> and trim
+        full_text = re.sub(r'(<br>)+', '<br>', full_text)
+        full_text = full_text.strip()
+        full_text = re.sub(r'^<br>|<br>$', '', full_text)
         
-        # If this is a callout, use the special admonition converter
-        if callout_type:
-            return self._convert_blockquote_to_admonition(el)
+        return full_text
+
+    # Custom markdownify converters for specific HTML elements
+    def convert_table(self, el, text, parent_tags=None, **kwargs):
+        """Convert table to markdown with proper spacing."""
+        from markdownify import markdownify
         
-        # Regular blockquote processing
-        text = text.strip()
-        if not text:
-            return ''
-
-        # Add > prefix to each line
-        lines = text.split('\n')
-        quoted_lines = []
-        for line in lines:
-            if line.startswith('>'):
-                quoted_lines.append(line)
-            else:
-                quoted_lines.append(f'> {line}' if line.strip() else '>')
-
-        return '\n'.join(quoted_lines) + '\n\n'
-
-    def convert_span(self, el, text, parent_tags=None, **kwargs):
-        """Handle span elements, including Confluence anchors."""
-        classes = el.get('class', [])
-
-        # Check for Confluence anchor links
-        if 'confluence-anchor-link' in classes:
-            anchor_id = el.get('id', '')
-            if anchor_id:
-                # Return an HTML anchor that works in markdown
-                return f'<a id="{anchor_id}"></a>'
-            return ''
-
-        # For other spans, just return the text content
-        return text
-
+        # Use parent converter but ensure proper spacing
+        table_markdown = super().convert_table(el, text, parent_tags, **kwargs)
+        
+        # Ensure table is separated from surrounding text with blank lines
+        if table_markdown.strip():
+            if not table_markdown.startswith('\n\n'):
+                table_markdown = '\n\n' + table_markdown
+            if not table_markdown.endswith('\n'):
+                table_markdown += '\n\n'
+        
+        return table_markdown
+    
+    def _get_comment_prefix(self, language: str) -> str:
+        """Get the appropriate comment prefix for a programming language."""
+        if not language:
+            return '#'
+        
+        # Look up in the language map
+        prefix = self.LANGUAGE_COMMENT_MAP.get(language.lower())
+        if prefix:
+            return prefix
+        
+        # Default to '#' for unknown languages
+        return '#'
+    
     def convert_pre(self, el, text, parent_tags=None, **kwargs):
         """Handle pre elements, especially for code blocks."""
         # Check for syntaxhighlighter params
         params = el.get('data-syntaxhighlighter-params', '')
-        if params:
-            language = self._parse_syntaxhighlighter_language(params)
-            if language:
-                return f"```{language}\n{text.rstrip('\n')}\n```\n\n"
-
+        header = el.get('data-code-header', '')
+        
         # Check for code child element
         code_el = el.find('code')
         if code_el:
             language = self._extract_code_language(code_el)
             code_text = code_el.get_text()
-            if language and language != 'text':
-                return f"```{language}\n{code_text.rstrip('\n')}\n```\n\n"
-            return f"```\n{code_text.rstrip('\n')}\n```\n\n"
-
-        # Plain pre without code element
-        return f"```\n{text.rstrip('\n')}\n```\n\n"
+        else:
+            language = self._parse_syntaxhighlighter_language(params) if params else ''
+            code_text = text
+        
+        # Format the code block with proper language
+        if language and language != 'text':
+            fenced_code = f"```{language}\n{code_text.rstrip('\n')}\n```\n\n"
+        else:
+            fenced_code = f"```\n{code_text.rstrip('\n')}\n```\n\n"
+        
+        # Add header if present - use language-appropriate comment prefix
+        if header:
+            comment_prefix = self._get_comment_prefix(language)
+            # For block comments (CSS, HTML, etc.), we need to handle closing
+            if comment_prefix == '/*':
+                return f"{comment_prefix} {header} */\n\n{fenced_code}"
+            elif comment_prefix == '<!--':
+                return f"{comment_prefix} {header} -->\n\n{fenced_code}"
+            else:
+                return f"{comment_prefix} {header}\n\n{fenced_code}"
+        
+        return fenced_code
     
     def convert_div(self, el, text, parent_tags=None, **kwargs):
         """Handle div elements, with special handling for code panels."""
         classes = el.get('class', [])
         
         # Check if this is a code panel (has both 'code' and 'panel' classes)
+        # If the code panel was already processed by MacroHandler, it will have pre>code
         has_code = any(cls == 'code' for cls in classes)
         has_panel = any(cls == 'panel' or cls == 'pdl' for cls in classes)
         
         if has_code and has_panel:
-            # This is a Confluence code panel
-            # Try to extract language and code
-            language = ''
-            code_text = ''
-            
-            # Try to find pre element with syntaxhighlighter
+            # This should be handled by convert_pre on the inner pre element
+            # If no pre element exists, just extract text content
             pre_elem = el.find('pre')
-            if pre_elem:
-                params = pre_elem.get('data-syntaxhighlighter-params', '')
-                if params:
-                    language = self._parse_syntaxhighlighter_language(params)
-                code_text = pre_elem.get_text()
-            else:
-                # Try codeContent div
-                code_content = el.find(class_='codeContent')
-                if code_content:
-                    code_text = code_content.get_text()
-            
-            # Try to extract title from panelHeader
-            title = ''
-            panel_header = el.find(class_='panelHeader')
-            if not panel_header:
-                panel_header = el.find(class_='codeHeader')
-            if panel_header:
-                title = panel_header.get_text(strip=True)
-            
-            # Format the code block
-            fenced_code = f"```{language}\n{code_text.rstrip('\n')}\n```\n\n"
-            if title:
-                return f"**{title}**\n\n{fenced_code}"
-            return fenced_code
-        
-        # Process emoticons in the div
-        if el.find('img', class_='emoticon'):
-            soup = BeautifulSoup('', 'lxml')
-            # Copy the div and process emoticons
-            div_copy = BeautifulSoup(str(el), 'lxml').find('div')
-            self._process_emoticons(div_copy)
-            text = self._get_text_content(div_copy)
-            return text + '\n\n'
+            if not pre_elem:
+                return text + '\n\n' if text.strip() else ''
+            # If pre exists, it will be processed by convert_pre
+            # Just return the text content
+            return text
         
         # Regular div - return text content
         return text + '\n\n' if text.strip() else ''
     
-    def _process_emoticons(self, element):
-        """Convert emoticon img tags to text equivalents."""
-        from bs4 import BeautifulSoup
-        import re
+    def convert_ul(self, el, text, parent_tags=None, **kwargs):
+        """Convert unordered list with consistent indentation."""
+        # Track nesting depth
+        depth = kwargs.get('depth', 0)
+        indent = '    ' * depth  # 4 spaces per level
         
-        for img in element.find_all('img', class_='emoticon'):
-            src = img.get('src', '')
-            alt = img.get('alt', '')
-            
-            # Extract emoticon name from src URL
-            emoticon_name = ''
-            if src:
-                match = re.search(r'/([^/]+)\.(?:svg|png|gif)$', src)
-                if match:
-                    emoticon_name = match.group(1)
-            
-            # Use standardized !(name) format
-            replacement = f'!({emoticon_name or alt or "emoticon"})'
-            img.replace_with(replacement)
-
+        result = ''
+        # Process each list item
+        for child in el.children:
+            if child.name == 'li':
+                # Get the text of the list item
+                item_text = self._process_list_item_content(child, depth + 1)
+                
+                # Add the list item with proper indentation
+                result += f"{indent}- {item_text}\n"
+                
+                # Process nested lists
+                for nested_child in child.children:
+                    if nested_child.name in ['ul', 'ol']:
+                        nested_result = self._convert_nested_list(nested_child, depth + 1)
+                        if nested_result:
+                            result += nested_result + '\n'
+                
+                # If this is the last item, don't add extra newline
+        
+        return result.rstrip() + '\n' if result else ''
+    
+    def convert_ol(self, el, text, parent_tags=None, **kwargs):
+        """Convert ordered list with consistent numbering and indentation."""
+        # Track nesting depth
+        depth = kwargs.get('depth', 0)
+        indent = '    ' * depth  # 4 spaces per level
+        
+        result = ''
+        # Process each list item
+        for idx, child in enumerate(el.children):
+            if child.name == 'li':
+                # Get the text of the list item
+                item_text = self._process_list_item_content(child, depth + 1)
+                
+                # Use correct numbering (depth 0 gets 1, 2, 3; depth 1 gets a, b, c)
+                if depth == 0:
+                    number = idx + 1
+                elif depth == 1:
+                    number = ListTypeMarkers.get_alpha_marker(idx)
+                else:
+                    number = ListTypeMarkers.get_roman_marker(idx)
+                
+                result += f"{indent}{number}. {item_text}\n"
+                
+                # Process nested lists
+                for nested_child in child.children:
+                    if nested_child.name in ['ul', 'ol']:
+                        nested_result = self._convert_nested_list(nested_child, depth + 1)
+                        if nested_result:
+                            result += nested_result + '\n'
+        
+        return result.rstrip() + '\n' if result else ''
+    
+    def _convert_nested_list(self, el, depth):
+        """Convert nested list recursively."""
+        if el.name == 'ul':
+            return self.convert_ul(el, '', depth=depth)
+        elif el.name == 'ol':
+            return self.convert_ol(el, '', depth=depth)
+        return ''
+    
+    def _process_list_item_content(self, li, depth):
+        """Process content within a list item."""
+        from bs4 import BeautifulSoup
+        
+        # Convert the li element to HTML and process it
+        li_html = str(li)
+        li_soup = BeautifulSoup(li_html, 'lxml')
+        
+        # Get direct text and inline elements
+        content = ''
+        for child in li_soup.find('li').children:
+            if not hasattr(child, 'name') or child.name is None:
+                # Text node
+                text = str(child).strip()
+                if text:
+                    content += text + ' '
+            elif child.name in ['p', 'span', 'strong', 'em', 'b', 'i', 'code', 'a']:
+                # Inline elements - convert recursively
+                from bs4 import BeautifulSoup
+                child_html = str(child)
+                child_md = self.convert(child_html)
+                if child_md:
+                    content += child_md.strip() + ' '
+        
+        return content.strip()
+    
     def convert_code(self, el, text, parent_tags=None, **kwargs):
         """Handle inline code and code blocks."""
         # Check if this is a code block (inside pre) or inline code
@@ -1293,99 +1107,52 @@ class MarkdownConverter(MarkdownifyConverter):
             # This will be handled by convert_pre, just return the text
             return text
 
-        # Inline code - just wrap in backticks
-        return f"`{text}`"
+        # Inline code - preserve whitespace and escape backticks
+        if '`' in text:
+            # Use double backticks if content contains backticks
+            return f'``{text}``'
+        return f'`{text}`'
     
     def convert_img(self, el, text, parent_tags=None, **kwargs):
-        """Handle images."""
-        src = el.get('src', '')
+        """Handle image conversion."""
         alt = el.get('alt', '')
+        src = el.get('src', '')
         title = el.get('title', '')
         
-        # Use title as alt if alt is missing
-        if not alt and title:
-            alt = title
+        # Special handling for emoticons
+        if 'emoticon' in el.get('class', []):
+            # Return empty string - emoticons are handled by HtmlCleaner
+            return ''
         
-        return f'![{alt}]({src})'
+        # Regular image - use markdown syntax
+        if title:
+            return f'![{alt}]({src} "{title}")'
+        else:
+            return f'![{alt}]({src})'
     
-    def _extract_code_language(self, element) -> str:
-        """Extract programming language from code element."""
-        # Check class attribute for language hints
-        classes = element.get('class', [])
-        for cls in classes:
-            if str(cls).startswith('language-'):
-                return str(cls).replace('language-', '')
-            if str(cls).startswith('lang-'):
-                return str(cls).replace('lang-', '')
-
-        # Check data-language attribute
-        lang = element.get('data-language')
-        if lang:
-            return lang
-
-        # Check parent pre element for syntaxhighlighter params
-        parent = element.parent
-        if parent and parent.name == 'pre':
-            params = parent.get('data-syntaxhighlighter-params', '')
-            if params:
-                lang = self._parse_syntaxhighlighter_language(params)
-                if lang:
-                    return lang
-
-        # Check element itself for syntaxhighlighter params
-        params = element.get('data-syntaxhighlighter-params', '')
-        if params:
-            lang = self._parse_syntaxhighlighter_language(params)
-            if lang:
-                return lang
-
-        # Common language class patterns
-        language_map = {
-            'python': 'python',
-            'javascript': 'javascript',
-            'java': 'java',
-            'bash': 'bash',
-            'shell': 'bash',
-            'sql': 'sql',
-            'yaml': 'yaml',
-            'yml': 'yaml',
-            'json': 'json',
-            'xml': 'xml',
-            'html': 'html',
-            'css': 'css'
-        }
-
-        for cls in classes:
-            if str(cls) in language_map:
-                return language_map[str(cls)]
-
-        return 'text'  # Default fallback
-
+    def convert_blockquote(self, el, text, parent_tags=None, **kwargs):
+        """Handle blockquote conversion."""
+        # Use our custom admonition conversion for blockquotes with callout attributes
+        if el.get('data-callout') or any(cls.startswith('is-') for cls in el.get('class', [])):
+            return self._convert_blockquote_to_admonition(el)
+        
+        # Regular blockquote
+        return super().convert_blockquote(el, text, parent_tags, **kwargs)
+    
     def _parse_syntaxhighlighter_language(self, params: str) -> str:
         """Parse language from syntaxhighlighter params string."""
         for param in params.split(';'):
             param = param.strip()
             if param.startswith('brush:'):
                 language = param.replace('brush:', '').strip()
-                # Map common Confluence language names
-                language_map = {
-                    'bash': 'bash',
-                    'shell': 'bash',
-                    'sh': 'bash',
-                    'python': 'python',
-                    'py': 'python',
-                    'javascript': 'javascript',
-                    'js': 'javascript',
-                    'java': 'java',
-                    'sql': 'sql',
-                    'xml': 'xml',
-                    'html': 'html',
-                    'css': 'css',
-                    'json': 'json',
-                    'yaml': 'yaml',
-                    'yml': 'yaml',
-                    'text': 'text',
-                    'plain': 'text',
-                }
-                return language_map.get(language.lower(), language)
+                # Use the comprehensive language map from _extract_language_from_syntaxhighlighter_params
+                return self._extract_language_from_syntaxhighlighter_params(param.replace('brush:', 'brush: '))
         return ''
+    
+    def _extract_language_from_syntaxhighlighter_params(self, params: str) -> str:
+        """Extract language from syntaxhighlighter params."""
+        # This is a fallback method - the real implementation is in MacroHandler
+        # Import it here to avoid circular dependencies
+        from .macro_handler import MacroHandler
+        handler = MacroHandler()
+        return handler._extract_language_from_syntaxhighlighter_params(params)

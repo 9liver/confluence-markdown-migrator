@@ -1,0 +1,117 @@
+<p>Diese Anleitung beschreibt, wie unsere Ansible-Umgebung für die Entwicklung und Tests lokal eingerichtet werden kann.</p><div class="confluence-information-macro confluence-information-macro-information"><span class="aui-icon aui-icon-small aui-iconfont-info confluence-information-macro-icon"></span><div class="confluence-information-macro-body"><p>Alle Pfade in dieser Anleitung sind natürlich als persönliche Vorlieben anzusehen und frei nach belieben anzupassen <img class="emoticon emoticon-smile" src="https://confluence.oediv.lan/s/t1v677/8703/51k4y0/_/images/icons/emoticons/smile.svg" data-emoticon-name="smile" alt="(smile)" /></p></div></div><div class="confluence-information-macro confluence-information-macro-information"><span class="aui-icon aui-icon-small aui-iconfont-info confluence-information-macro-icon"></span><div class="confluence-information-macro-body"><p>Diese Anleitung setzt vorraus, dass die VDI bereits eingerichtet ist, da hier mindestens der lokale squid für den Zugriff von pip benötigt wird!</p></div></div><div class="confluence-information-macro confluence-information-macro-information"><span class="aui-icon aui-icon-small aui-iconfont-info confluence-information-macro-icon"></span><div class="confluence-information-macro-body"><p>Ab <a href="https://confluence.oediv.lan/pages/viewpage.action?pageId=244744731">Punkt 3</a> kann diese Anleitung auch verwendet werden, um Ansible auf der sys-oed-103-u zu konfigurieren</p></div></div><div class="confluence-information-macro confluence-information-macro-information"><p class="title">Changelog</p><span class="aui-icon aui-icon-small aui-iconfont-info confluence-information-macro-icon"></span><div class="confluence-information-macro-body"><p>2024-10-31: Anpassung von Links und Configs an das neue GitLab</p></div></div><h2 id="Ansiblelokaleinrichten-Schritt-für-Schritt-Anleitung">Schritt-für-Schritt-Anleitung</h2><p></p><ol><li><p class="auto-cursor-target">Für diese Anleitung notwendige Pakete installieren</p><div class="code panel pdl" style="border-width: 1px;"><div class="codeContent panelContent pdl">
+<pre class="syntaxhighlighter-pre" data-syntaxhighlighter-params="brush: bash; gutter: false; theme: RDark" data-theme="RDark">$ sudo apt update &amp;&amp; sudo apt install python3 python3-pip git</pre>
+</div></div></li><li><p class="auto-cursor-target">Da die Ansible Version aus den offiziellen repos zu alt ist und einige module fehlen installieren wir <a class="external-link" href="https://docs.ansible.com/ansible/latest/installation_guide/intro_installation.html#pip-install" rel="nofollow">Ansible über pip</a></p><ol><li><p class="auto-cursor-target">Sofern Ansible bereits über die Paketverwaltung installiert wurde:<code><code> </code></code></p><div class="code panel pdl" style="border-width: 1px;"><div class="codeContent panelContent pdl">
+<pre class="syntaxhighlighter-pre" data-syntaxhighlighter-params="brush: bash; gutter: false; theme: RDark" data-theme="RDark">$ sudo apt remove ansible</pre>
+</div></div></li><li><p class="auto-cursor-target">Ansible installieren</p><div class="code panel pdl" style="border-width: 1px;"><div class="codeContent panelContent pdl">
+<pre class="syntaxhighlighter-pre" data-syntaxhighlighter-params="brush: bash; gutter: false; theme: RDark" data-theme="RDark">$ python3 -m pip install --proxy http://127.0.0.1:3128 --user ansible</pre>
+</div></div></li><li><p class="auto-cursor-target">Pfad zum Ansible binary bekannt machen in <code>~/.profile</code> </p><div class="code panel pdl" style="border-width: 1px;"><div class="codeHeader panelHeader pdl" style="border-bottom-width: 1px;"><b>~/.profile</b></div><div class="codeContent panelContent pdl">
+<pre class="syntaxhighlighter-pre" data-syntaxhighlighter-params="brush: bash; gutter: false; theme: RDark" data-theme="RDark"># set PATH so it includes user&#39;s private bin if it exists
+if [ -d &quot;$HOME/.local/bin&quot; ] ; then
+    PATH=&quot;$HOME/.local/bin:$PATH&quot;
+fi</pre>
+</div></div><div class="confluence-information-macro confluence-information-macro-note"><span class="aui-icon aui-icon-small aui-iconfont-warning confluence-information-macro-icon"></span><div class="confluence-information-macro-body"><p>Eventuell bereits in der standard <code>.profile</code> vorhanden, bitte prüfen</p><p><code>.profile</code> wird beim Login einmalig eingelesen. Falls <code>.local/bin</code> nicht bereits vorher existierte ist ein relogin notwendig. Da ein relogin mit Citrix so meines Wissens nicht möglich ist, wäre hier ein reboot notwendig.</p><p>Alternativ vorerst zur Laufzeit </p><div class="code panel pdl" style="border-width: 1px;"><div class="codeContent panelContent pdl">
+<pre class="syntaxhighlighter-pre" data-syntaxhighlighter-params="brush: bash; gutter: false; theme: RDark" data-theme="RDark">export PATH=&quot;$HOME/.local/bin:$PATH&quot;</pre>
+</div></div></div></div></li><li><p class="auto-cursor-target">Ansible version prüfen</p><div class="code panel pdl" style="border-width: 1px;"><div class="codeContent panelContent pdl">
+<pre class="syntaxhighlighter-pre" data-syntaxhighlighter-params="brush: bash; gutter: false; theme: RDark" data-theme="RDark">$ ansible --version</pre>
+</div></div><p class="auto-cursor-target">Zum Zeitpunkt der Doku entspricht dies:</p><div class="code panel pdl" style="border-width: 1px;"><div class="codeContent panelContent pdl">
+<pre class="syntaxhighlighter-pre" data-syntaxhighlighter-params="brush: bash; gutter: false; theme: RDark" data-theme="RDark">ansible [core 2.16.6]
+  config file = /home/OEDIV/reinersm/.ansible/ansible.cfg
+  configured module search path = [&#39;/home/OEDIV/reinersm/.ansible/plugins/modules&#39;, &#39;/usr/share/ansible/plugins/modules&#39;]
+  ansible python module location = /home/OEDIV/reinersm/.local/lib/python3.10/site-packages/ansible
+  ansible collection location = /home/OEDIV/reinersm/.ansible/collections:/usr/share/ansible/collections
+  executable location = /home/OEDIV/reinersm/.local/bin/ansible
+  python version = 3.10.12 (main, Nov 20 2023, 15:14:05) [GCC 11.4.0] (/usr/bin/python3)
+  jinja version = 3.0.3
+  libyaml = True</pre>
+</div></div></li><li><p class="auto-cursor-target">Optional: Ansible updaten</p><div class="code panel pdl" style="border-width: 1px;"><div class="codeContent panelContent pdl">
+<pre class="syntaxhighlighter-pre" data-syntaxhighlighter-params="brush: bash; gutter: false; theme: RDark" data-theme="RDark">$ python3 -m pip install --proxy http://127.0.0.1:3128 --upgrade --user ansible</pre>
+</div></div></li></ol></li><li><p class="auto-cursor-target">Das SSH-Keypair auf der VDI und im GitLab hinterlegen<span class="confluence-anchor-link" id="Ansiblelokaleinrichten-3"></span></p><div class="confluence-information-macro confluence-information-macro-note"><span class="aui-icon aui-icon-small aui-iconfont-warning confluence-information-macro-icon"></span><div class="confluence-information-macro-body"><p>Wenn ihr euer Schlüsselpaar über MobaXterm erzeugt habt, liegt dieses vermutlich im PuTTY-Format PPK vor und muss vorher noch in das OpenSSH Format konvertiert werden: <a href="https://confluence.oediv.lan/pages/viewpage.action?pageId=265663550" rel="nofollow">Hier eine Anleitung vom 2nd Level</a></p></div></div><ol><li><div class="code panel pdl" style="border-width: 1px;"><div class="codeContent panelContent pdl">
+<pre class="syntaxhighlighter-pre" data-syntaxhighlighter-params="brush: bash; gutter: false; theme: RDark" data-theme="RDark">$ mkdir ~/.ssh</pre>
+</div></div></li><li><div class="code panel pdl" style="border-width: 1px;"><div class="codeContent panelContent pdl">
+<pre class="syntaxhighlighter-pre" data-syntaxhighlighter-params="brush: bash; gutter: false; theme: RDark" data-theme="RDark">$ chmod 700 ~/.ssh</pre>
+</div></div></li><li>Private-Key (und optional Public-Key) auf der VDI unter <code>~/.ssh/&lt;private key filename&gt;</code> ablegen</li><li><div class="code panel pdl" style="border-width: 1px;"><div class="codeContent panelContent pdl">
+<pre class="syntaxhighlighter-pre" data-syntaxhighlighter-params="brush: bash; gutter: false; theme: RDark" data-theme="RDark">$ chmod 600 ~/.ssh/&lt;private key filename&gt;</pre>
+</div></div><div class="confluence-information-macro confluence-information-macro-information"><span class="aui-icon aui-icon-small aui-iconfont-info confluence-information-macro-icon"></span><div class="confluence-information-macro-body">Standard SSH Namensschemata für ssh-keys: <code>id_rsa, id_ecdsa, id_ecdsa_sk, id_ed25519, id_ed25519_sk</code> oder <code>id_dsa</code></div></div></li><li><p class="auto-cursor-target">Den eigenen Public-Key im GitLab hinterlegen: <a class="external-link" href="https://gitlab.services.p.oediv.io/-/user_settings/ssh_keys" rel="nofollow">SSH Keys · User Settings · GitLab (oediv.io)</a></p></li></ol></li><li>Konfigurationsdateien anlegen<ol><li><p class="auto-cursor-target">ansible config mit nützlichen defaults. Der <code>remote_user</code> und <code>roles_path</code> ist hier anzupassen</p><div class="code panel pdl" style="border-width: 1px;"><div class="codeHeader panelHeader pdl" style="border-bottom-width: 1px;"><b>~/.ansible/ansible.cfg</b></div><div class="codeContent panelContent pdl">
+<pre class="syntaxhighlighter-pre" data-syntaxhighlighter-params="brush: text; gutter: true; theme: RDark" data-theme="RDark">[defaults]
+forks = 10
+timeout = 20
+vault_password_file = $HOME/.vault_pass
+remote_user = &lt;username&gt;
+host_key_checking = False
+action_warnings = False
+deprecation_warnings = False
+inventory_ignore_extensions = .json
+remote_tmp = /tmp
+allow_world_readable_tmpfiles = true
+roles_path = &lt;Pfad zum Verzeichnis der Ansible Rollen z.B. ~/workspace/git/ansible-roles/&gt;</pre>
+</div></div></li><li><p class="auto-cursor-target">git config mit nützlichen Aliassen. Email-Adresse und Name des Benutzers sind zu ändern (siehe auch: <a href="https://confluence.oediv.lan/x/0TnrB" rel="nofollow">Anpassungen 3rd Level Web Application Services - Michel Schweegmann</a>)</p><div class="code panel pdl" style="border-width: 1px;"><div class="codeHeader panelHeader pdl" style="border-bottom-width: 1px;"><b>~/.gitconfig</b></div><div class="codeContent panelContent pdl">
+<pre class="syntaxhighlighter-pre" data-syntaxhighlighter-params="brush: text; gutter: true; theme: RDark" data-theme="RDark">[user]
+    email = &lt;email of user&gt;
+    name = &lt;full name of user&gt;
+[http]
+    sslVerify = false
+    proxy = http://127.0.0.1:3128
+[https]
+    sslVerify = false
+    proxy = http://127.0.0.1:3128
+[alias]
+    br = branch
+    ch = checkout
+    chb = checkout -b
+    co = commit
+    com = commit -m
+    pu = pull
+    pushu = push -u origin HEAD
+    st = status
+
+</pre>
+</div></div></li><li><p class="auto-cursor-target">ssh config, um für gitlab automatisch den richtigen ssh-user zu benutzen</p><div class="code panel pdl" style="border-width: 1px;"><div class="codeHeader panelHeader pdl" style="border-bottom-width: 1px;"><b>~/.ssh/config</b></div><div class="codeContent panelContent pdl">
+<pre class="syntaxhighlighter-pre" data-syntaxhighlighter-params="brush: text; gutter: true; theme: RDark" data-theme="RDark">Host gitlab.services.p.oediv.io
+  User git
+  # Optional: falls der Name des private keys nicht dem erwarteten Standard (id_rsa, id_ecdsa, id_ecdsa_sk, id_ed25519, id_ed25519_sk oder id_dsa) entspricht
+  # IdentityFile /&lt;home path of user&gt;/.ssh/&lt;name of privatekey&gt;</pre>
+</div></div></li><li><p class="auto-cursor-target">Umgebungsvariablen für Ansible können am Ende der <code>.bashrc </code>angefügt werden</p><div class="code panel pdl" style="border-width: 1px;"><div class="codeHeader panelHeader pdl" style="border-bottom-width: 1px;"><b>~/.bashrc</b></div><div class="codeContent panelContent pdl">
+<pre class="syntaxhighlighter-pre" data-syntaxhighlighter-params="brush: bash; gutter: true; theme: RDark" data-theme="RDark">[...]
+
+ANSIBLE_CONFIG=$HOME/.ansible/ansible.cfg
+export ANSIBLE_CONFIG
+export ANSIBLE_BECOME=true</pre>
+</div></div><ol><li><p class="auto-cursor-target"><span>Anschließend Änderungen direkt aktivieren:</span><code><span><br/></span></code></p><div class="code panel pdl" style="border-width: 1px;"><div class="codeContent panelContent pdl">
+<pre class="syntaxhighlighter-pre" data-syntaxhighlighter-params="brush: bash; gutter: false; theme: RDark" data-theme="RDark">$ source ~/.bashrc</pre>
+</div></div></li></ol></li><li><p class="auto-cursor-target">Ansible Vault Passwort anlegen</p><ol><li>Das Passwort kann im Thycotic eingesehen werden: <strong>Geheime Schlüssel &gt; ICC &gt; IOS-POC-LNX &gt; SYSTEMS &gt; Ansible &gt; Ansible Vault</strong></li><li>Abzulegen ist das Passwort hier: <code>~/.vault_pass</code></li><li><div class="code panel pdl" style="border-width: 1px;"><div class="codeContent panelContent pdl">
+<pre class="syntaxhighlighter-pre" data-syntaxhighlighter-params="brush: bash; gutter: false; theme: RDark" data-theme="RDark">$ chmod 600 ~/.vault_pass</pre>
+</div></div></li></ol></li></ol></li><li>fertig</li></ol><p><br/></p><h2 id="Ansiblelokaleinrichten-VerwandteArtikel">Verwandte Artikel</h2><p></p><p>
+
+
+
+
+
+
+
+
+
+
+
+<ul class="content-by-label">
+        <li>
+        <div>
+                <span class="icon aui-icon content-type-page" title="Page">Page:</span>        </div>
+
+        <div class="details">
+                        <a href="/display/ICS/Ansible+lokal+einrichten">Ansible lokal einrichten</a>
+                
+                        
+                    </div>
+    </li>
+        <li>
+        <div>
+                <span class="icon aui-icon content-type-page" title="Page">Page:</span>        </div>
+
+        <div class="details">
+                        <a href="/pages/viewpage.action?pageId=61834691">Ansible Playbooks / Storage Anwendungsfälle</a>
+                
+                        
+                    </div>
+    </li>
+    </ul>
+</p><p><br/></p><p><br/></p>

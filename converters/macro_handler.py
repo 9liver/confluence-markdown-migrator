@@ -26,6 +26,16 @@ class MacroHandler:
             'expand': self._convert_expand_macro,
             'panel': self._convert_panel_macro,
         }
+        
+        # Icon mapping for callout types
+        self._icon_map = {
+            'info': 'ℹ️',
+            'warning': '⚠️',
+            'success': '✔️',
+            'danger': '❗',
+            'note': '📝',
+            'tip': '💡'
+        }
     
     def convert(self, soup: BeautifulSoup, format_type: str = 'export') -> Tuple[BeautifulSoup, Dict[str, Any], List[str]]:
         """
@@ -177,7 +187,7 @@ class MacroHandler:
 
         # Create blockquote structure
         self._create_blockquote(element, callout_type='warning', title=title, body=body)
-
+    
     def _convert_note_macro(self, element: Tag, format_type: str) -> None:
         """Convert note macro to blockquote (maps to warning)."""
         title = self._extract_parameter(element, 'title', format_type)
@@ -187,7 +197,7 @@ class MacroHandler:
 
         # Note maps to warning in Wiki.js
         self._create_blockquote(element, callout_type='warning', title=title, body=body)
-
+    
     def _convert_tip_macro(self, element: Tag, format_type: str) -> None:
         """Convert tip macro to blockquote with success callout class."""
         title = self._extract_parameter(element, 'title', format_type)
@@ -209,76 +219,72 @@ class MacroHandler:
         collapse = self._extract_parameter(element, 'collapse', format_type) or 'false'
         theme = self._extract_parameter(element, 'theme', format_type)
 
-        # Extract title from parameter or codeHeader div
+        # Extract title from parameter or codeHeader div - prioritize codeHeader
         title = self._extract_parameter(element, 'title', format_type)
         if not title:
             # Check for codeHeader div (Confluence export format)
             code_header = element.find(class_='codeHeader')
             if not code_header:
+                # Also check for panelHeader as fallback
                 code_header = element.find(class_='panelHeader')
             if code_header:
                 title = code_header.get_text(strip=True)
+                # Store this for later deletion to avoid duplication
+                code_header['data-processed'] = 'true'
 
         # Extract code content - always get text, not HTML
         code = ''
         # First check for pre element with syntaxhighlighter
         pre_elem = element.find('pre', class_='syntaxhighlighter-pre')
+        # If not found, look for any pre element
+        if not pre_elem:
+            pre_elem = element.find('pre')
+        # If still not found, look for codeContent div
+        if not pre_elem:
+            code_content = element.find(class_='codeContent')
+            if code_content:
+                pre_elem = code_content.find('pre')
+        
         if pre_elem:
             code = pre_elem.get_text()
             # Also try to get language from this element if not yet found
             if not language:
                 params = pre_elem.get('data-syntaxhighlighter-params', '')
                 if params:
-                    for param in params.split(';'):
-                        param = param.strip()
-                        if param.startswith('brush:'):
-                            lang = param.replace('brush:', '').strip()
-                            language_map = {
-                                'bash': 'bash', 'shell': 'bash', 'sh': 'bash',
-                                'python': 'python', 'py': 'python',
-                                'javascript': 'javascript', 'js': 'javascript',
-                                'java': 'java', 'sql': 'sql', 'xml': 'xml',
-                                'html': 'html', 'css': 'css', 'json': 'json',
-                                'yaml': 'yaml', 'yml': 'yaml', 'text': 'text', 'plain': 'text',
-                            }
-                            language = language_map.get(lang.lower(), lang)
-                            break
+                    language = self._extract_language_from_syntaxhighlighter_params(params)
         else:
-            # Try to find any pre element
-            pre_elem = element.find('pre')
-            if pre_elem:
-                code = pre_elem.get_text()
-            else:
-                # Try codeContent div
-                code_content = element.find(class_='codeContent')
-                if code_content:
-                    code = code_content.get_text()
-                else:
-                    # Fallback to element text
-                    code = element.get_text()
+            # Fallback: just get all text from the element
+            code = element.get_text()
 
-        # Create pre > code block
+        # Get the actual pre element from the DOM that we'll be modifying
+        actual_pre_elem = pre_elem or element.find('pre')
+        
+        # Create pre > code block structure
         new_soup = BeautifulSoup('', 'lxml')
         pre = new_soup.new_tag('pre')
         code_tag = new_soup.new_tag('code')
-
+        
         # Add language class
         if language:
             code_tag['class'] = f'language-{language}'
-
+        
         code_tag.string = code or ''
         pre.append(code_tag)
-
-        # Add title if available
+        
+        # Store code header in data attribute on pre element for later use
         if title:
-            title_p = new_soup.new_tag('p')
-            title_strong = new_soup.new_tag('strong')
-            title_strong.string = title
-            title_p.append(title_strong)
-            element.replace_with(title_p)
-            title_p.insert_after(pre)
-        else:
-            element.replace_with(pre)
+            pre['data-code-header'] = title
+        
+        # Store any syntaxhighlighter params on the pre element
+        if actual_pre_elem and actual_pre_elem.get('data-syntaxhighlighter-params'):
+            pre['data-syntaxhighlighter-params'] = actual_pre_elem.get('data-syntaxhighlighter-params')
+        
+        # Replace the original element with the new pre>code structure
+        element.replace_with(pre)
+        
+        # Clean up any header elements that were marked as processed
+        for header in element.find_all(attrs={'data-processed': 'true'}):
+            header.decompose()
     
     def _convert_expand_macro(self, element: Tag, format_type: str) -> None:
         """Convert expand macro to details > summary collapsible structure."""
@@ -382,15 +388,11 @@ class MacroHandler:
                 if body:
                     # Include the rich text body content
                     body_html = body.decode_contents(formatter="html") or ''
-                    # Process emoticons
-                    body_html = self._process_emoticons_in_string(body_html)
                     return body_html
         else:  # export
             # Look for data-macro-body attribute or child elements
             body = element.get('data-macro-body')
             if body:
-                # Process emoticons
-                body = self._process_emoticons_in_string(body)
                 return body
 
             # Check for confluence-information-macro-body class
@@ -399,8 +401,6 @@ class MacroHandler:
                 if plain_text:
                     return body_div.get_text() or ''
                 body_html = body_div.decode_contents(formatter="html") or ''
-                # Process emoticons
-                body_html = self._process_emoticons_in_string(body_html)
                 return body_html
 
             # Return content based on plain_text flag
@@ -408,8 +408,6 @@ class MacroHandler:
                 return element.get_text() or ''
             
             body_html = element.decode_contents(formatter="html") or ''
-            # Process emoticons
-            body_html = self._process_emoticons_in_string(body_html)
             return body_html
 
         return ''
@@ -422,10 +420,7 @@ class MacroHandler:
         return None
 
     def _extract_language_from_syntaxhighlighter(self, element: Tag) -> Optional[str]:
-        """Extract language from Confluence syntaxhighlighter params.
-
-        Confluence uses data-syntaxhighlighter-params="brush: bash; gutter: false; theme: RDark"
-        """
+        """Extract language from Confluence syntaxhighlighter params."""
         # Check element itself
         params = element.get('data-syntaxhighlighter-params', '')
         if not params:
@@ -435,32 +430,124 @@ class MacroHandler:
                 params = pre.get('data-syntaxhighlighter-params', '')
 
         if params:
-            # Parse "brush: bash; gutter: false" format
-            for param in params.split(';'):
-                param = param.strip()
-                if param.startswith('brush:'):
-                    language = param.replace('brush:', '').strip()
-                    # Map common Confluence language names
-                    language_map = {
-                        'bash': 'bash',
-                        'shell': 'bash',
-                        'sh': 'bash',
-                        'python': 'python',
-                        'py': 'python',
-                        'javascript': 'javascript',
-                        'js': 'javascript',
-                        'java': 'java',
-                        'sql': 'sql',
-                        'xml': 'xml',
-                        'html': 'html',
-                        'css': 'css',
-                        'json': 'json',
-                        'yaml': 'yaml',
-                        'yml': 'yaml',
-                        'text': 'text',
-                        'plain': 'text',
-                    }
-                    return language_map.get(language.lower(), language)
+            return self._extract_language_from_syntaxhighlighter_params(params)
+        
+        return None
+        
+    def _extract_language_from_syntaxhighlighter_params(self, params: str) -> Optional[str]:
+        """Extract language from params string like 'brush: bash; gutter: false; theme: RDark'.
+        
+        Args:
+            params: The syntaxhighlighter parameters string
+            
+        Returns:
+            Language string or None
+        """
+        # Parse "brush: bash; gutter: false" format
+        for param in params.split(';'):
+            param = param.strip()
+            if param.startswith('brush:'):
+                language = param.replace('brush:', '').strip()
+                # Map common Confluence language names
+                language_map = {
+                    # Shell scripting
+                    'bash': 'bash',
+                    'shell': 'bash',
+                    'sh': 'bash',
+                    'zsh': 'bash',
+                    'ksh': 'bash',
+                    'csh': 'bash',
+                    'tcsh': 'bash',
+                    
+                    # Python
+                    'python': 'python',
+                    'py': 'python',
+                    
+                    # JavaScript
+                    'javascript': 'javascript',
+                    'js': 'javascript',
+                    
+                    # Java & related
+                    'java': 'java',
+                    'scala': 'scala',
+                    'kotlin': 'kotlin',
+                    'groovy': 'groovy',
+                    
+                    # Web technologies
+                    'html': 'html',
+                    'xml': 'xml',
+                    'css': 'css',
+                    'less': 'less',
+                    'sass': 'sass',
+                    'scss': 'scss',
+                    
+                    # Data formats
+                    'json': 'json',
+                    'yaml': 'yaml',
+                    'yml': 'yaml',
+                    'toml': 'toml',
+                    'ini': 'ini',
+                    
+                    # SQL
+                    'sql': 'sql',
+                    'mysql': 'sql',
+                    'postgresql': 'sql',
+                    'plsql': 'sql',
+                    'tsql': 'sql',
+                    
+                    # Configuration & markup
+                    'text': 'text',
+                    'plain': 'text',
+                    'properties': 'text',
+                    'conf': 'text',
+                    'config': 'text',
+                    'markdown': 'markdown',
+                    'md': 'markdown',
+                    'rst': 'rst',
+                    'asciidoc': 'asciidoc',
+                    
+                    # Systems languages
+                    'c': 'c',
+                    'cpp': 'cpp',
+                    'c++': 'cpp',
+                    'cc': 'cpp',
+                    'cxx': 'cpp',
+                    'h': 'c',
+                    'hpp': 'cpp',
+                    
+                    # Other languages
+                    'php': 'php',
+                    'ruby': 'ruby',
+                    'rb': 'ruby',
+                    'perl': 'perl',
+                    'pl': 'perl',
+                    'go': 'go',
+                    'golang': 'go',
+                    'rust': 'rust',
+                    'rs': 'rust',
+                    'swift': 'swift',
+                    'r': 'r',
+                    'matlab': 'matlab',
+                    'sql': 'sql',
+                    
+                    # Template languages
+                    'jinja': 'jinja',
+                    'jinja2': 'jinja',
+                    'twig': 'twig',
+                    
+                    # Build tools
+                    'make': 'make',
+                    'cmake': 'cmake',
+                    'docker': 'docker',
+                    'dockerfile': 'docker',
+                    'terraform': 'hcl',
+                    'hcl': 'hcl',
+                    
+                    # Other formats
+                    'diff': 'diff',
+                    'patch': 'diff',
+                }
+                return language_map.get(language.lower(), language)
 
         return None
     
@@ -474,19 +561,23 @@ class MacroHandler:
             # Add data attribute for easier admonition detection by MarkdownConverter
             blockquote['data-callout'] = callout_type
 
-        # Add title
+        # Add title with icon if available
         if title:
             title_p = new_soup.new_tag('p')
             title_strong = new_soup.new_tag('strong')
-            title_strong.string = title
+            
+            # Prepend icon if we have one for this callout type
+            icon = self._icon_map.get(callout_type, '')
+            if icon:
+                title_strong.string = f"{icon} {title}"
+            else:
+                title_strong.string = title
+            
             title_p.append(title_strong)
             blockquote.append(title_p)
 
         # Add body content - parse and extract just the content, not wrapper elements
         if body:
-            # Process emoticons in the body before adding to blockquote
-            body = self._process_emoticons_in_string(body)
-            
             # Parse the body HTML
             body_soup = BeautifulSoup(body, 'lxml')
             # Get the body content, stripping html/body wrapper tags that lxml adds
@@ -512,10 +603,6 @@ class MacroHandler:
                     if title and child_text == title:
                         continue
 
-                    # Process emoticons in this child element
-                    if hasattr(child, 'find_all'):
-                        self._process_emoticons(child)
-
                     blockquote.append(child.extract() if hasattr(child, 'extract') else child)
             else:
                 # Fallback: just append the text
@@ -526,43 +613,3 @@ class MacroHandler:
                     blockquote.append(p)
 
         element.replace_with(blockquote)
-
-    def _process_emoticons(self, element: Tag) -> None:
-        """Convert emoticon img tags to text equivalents within an element."""
-        for img in element.find_all('img', class_='emoticon'):
-            self._convert_emoticon(img)
-    
-    def _process_emoticons_in_string(self, html_string: str) -> str:
-        """Process emoticons in an HTML string and return the modified string."""
-        # Quick check to avoid parsing if no emoticons
-        if 'emoticon' not in html_string:
-            return html_string
-            
-        soup = BeautifulSoup(html_string, 'lxml')
-        self._process_emoticons(soup)
-        # Return the modified HTML string
-        return str(soup)
-    
-    def _convert_emoticon(self, img: Tag) -> None:
-        """Convert an emoticon img tag to !(name) text format."""
-        src = img.get('src', '')
-        alt = img.get('alt', '')
-        
-        # Extract emoticon name from src URL (e.g., .../smile.svg -> smile)
-        emoticon_name = ''
-        if src:
-            # Look for common emoticon patterns
-            match = re.search(r'/([^/]+)\.(?:svg|png|gif)$', src)
-            if match:
-                emoticon_name = match.group(1)
-        elif alt:
-            # Try to extract from alt text like "(smile)"
-            match = re.search(r'\(([^)]+)\)', alt)
-            if match:
-                emoticon_name = match.group(1)
-        
-        # Use standardized !(name) format
-        replacement = f'!({emoticon_name or alt or "emoticon"})'
-        
-        # Replace the img tag with text
-        img.replace_with(replacement)

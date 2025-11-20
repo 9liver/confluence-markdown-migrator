@@ -291,6 +291,248 @@ python migrate.py --export-target both_wikis
 - Imports to BookStack via REST API
 - Useful for: multi-platform deployments, redundancy
 
+## Conversion Examples
+
+This section documents how Confluence-specific elements are converted to Markdown for 1:1 content fidelity.
+
+### Code Block Conversion
+
+**Confluence HTML:**
+```html
+<div class="code panel pdl" style="border-width: 1px;">
+    <div class="codeHeader panelHeader pdl">
+        <b>~/.profile</b>
+    </div>
+    <div class="codeContent panelContent pdl">
+        <pre class="syntaxhighlighter-pre" data-syntaxhighlighter-params="brush: bash; gutter: false">
+# set PATH
+if [ -d "$HOME/.local/bin" ] ; then
+    PATH="$HOME/.local/bin:$PATH"
+fi
+        </pre>
+    </div>
+</div>
+```
+
+**Converted Markdown:**
+```markdown
+**~/.profile**
+
+```bash
+# set PATH
+if [ -d "$HOME/.local/bin" ] ; then
+    PATH="$HOME/.local/bin:$PATH"
+fi
+````
+
+**Features:**
+- Header extracted from `codeHeader`/`panelHeader` and displayed as bold text
+- Language detected from `data-syntaxhighlighter-params` (e.g., `brush: bash`)
+- Proper fenced code blocks with language tags for syntax highlighting
+
+### Macro Conversion
+
+Confluence information macros (info, warning, note, tip) are converted to admonition blocks.
+
+#### Info Macro with Title
+
+**Confluence HTML:**
+```html
+<div class="confluence-information-macro confluence-information-macro-information">
+    <p class="title">Changelog</p>
+    <div class="confluence-information-macro-body">
+        <p>2024-10-31: Updated for new GitLab</p>
+    </div>
+</div>
+```
+
+**Converted Markdown:**
+```markdown
+> [!info] Changelog
+>
+> 2024-10-31: Updated for new GitLab
+```
+
+#### Warning/Note Macro
+
+**Confluence HTML:**
+```html
+<div class="confluence-information-macro confluence-information-macro-note">
+    <div class="confluence-information-macro-body">
+        <p>Be careful with this step</p>
+    </div>
+</div>
+```
+
+**Converted Markdown:**
+```markdown
+> [!warning]
+>
+> Be careful with this step
+```
+
+**Feature Map:**
+- `info` → `[!info]`
+- `warning`, `note` → `[!warning]` 
+- `tip`, `success` → `[!info]` (Wiki.js doesn't have tip/success variants)
+- Title extracted and included after admonition type
+- Body content preserved with proper continuation
+
+### List Conversion
+
+#### Nested Ordered Lists
+
+**Confluence HTML:**
+```html
+<ol>
+    <li>First main item
+        <ol>
+            <li>First nested item</li>
+            <li>Second nested item</li>
+        </ol>
+    </li>
+    <li>Second main item</li>
+</ol>
+```
+
+**Converted Markdown:**
+```markdown
+1. First main item
+
+   1. First nested item
+   2. Second nested item
+
+2. Second main item
+```
+
+**Features:**
+- Proper 3-space indentation for each nesting level
+- Empty line between main item and nested list for better readability
+- Preserves numbering scheme throughout
+
+#### Lists with Code Blocks
+
+**Confluence HTML:**
+```html
+<ol>
+    <li>Install package:
+        <div class="code panel pdl">
+            <pre class="syntaxhighlighter-pre">$ sudo apt update</pre>
+        </div>
+    </li>
+</ol>
+```
+
+**Converted Markdown:**
+```markdown
+1. Install package:
+
+   ```bash
+   $ sudo apt update
+   ```
+```
+
+**Features:**
+- Code blocks properly indented as part of list items
+- Language detected from syntaxhighlighter params
+- Maintains proper list continuation
+
+### Emoticon Conversion
+
+**Confluence HTML:**
+```html
+<p>Great work <img class="emoticon emoticon-smile" src="/emoticons/smile.svg" alt="(smile)" /></p>
+```
+
+**Converted Markdown:**
+```markdown
+Great work !(smile)
+```
+
+**Features:**
+- Extracts emoticon name from `src` URL or `alt` text
+- Converts to standardized `!(name)` format
+- Processes during HTML cleaning phase for consistent handling
+
+### Anchor Preservation
+
+**Confluence HTML:**
+```html
+<p>See step 3<span class="confluence-anchor-link" id="Ansiblelokaleinrichten-3"></span></p>
+```
+
+**Converted Markdown:**
+```markdown
+See step 3<a id="Ansiblelokaleinrichten-3"></a>
+```
+
+**Features:**
+- Anchor ID preserved from `confluence-anchor-link` spans
+- Standard HTML anchor syntax for maximum compatibility
+- Enables internal linking within migrated content
+
+### Content-by-Label Conversion
+
+**Confluence HTML:**
+```html
+<ul class="content-by-label">
+    <li>
+        <div>
+            <span class="icon aui-icon content-type-page">Page:</span>
+        </div>
+        <div class="details">
+            <a href="/pages/viewpage.action?pageId=123456">Related Page 1</a>
+        </div>
+    </li>
+</ul>
+```
+
+**Converted Markdown:**
+```markdown
+- [Related Page 1](/pages/viewpage.action?pageId=123456)
+```
+
+**Features:**
+- Strips Confluence-specific wrapper structure
+- Preserves page titles and links
+- Converts to clean bullet list format
+
+### Known Limitations
+
+1. **Complex Tables**: Very complex tables with merged cells or advanced formatting may require manual adjustment
+2. **Custom Macros**: Macros not in the standard set (info, warning, note, tip, code, expand, panel, toc) are converted to blockquotes with warning labels
+3. **Nested Macros**: Macros nested within each other may not preserve exact structure
+4. **Page Layouts**: Multi-column layouts or complex page structures may need manual reformatting
+5. **Special Formatting**: Some Confluence-specific styling may not have direct markdown equivalents
+
+### Troubleshooting Conversion Issues
+
+If you encounter conversion problems:
+
+1. **Enable Debug Logging**: Run with `-vv` flag to see detailed conversion logs
+2. **Use Test Suite**: Run `python3 -m unittest tests.converters_test` to verify conversion features
+3. **Check Original HTML**: Raw Confluence HTML can be examined in the cache directory
+4. **Report Issues**: When reporting bugs, include:
+   - Original Confluence HTML snippet
+   - Generated Markdown output
+   - Expected output
+   - Any error messages
+
+### Running Tests
+
+Verify conversion fidelity with the comprehensive test suite:
+
+```bash
+# Run all conversion tests
+python3 -m unittest tests.converters_test
+
+# Run specific test
+python3 -m unittest tests.converters_test.TestMarkdownConversion.test_code_block_with_header
+
+# Run tests with verbose output
+python3 -m unittest -v tests.converters_test
+```
+
 ### Migration Reports
 
 After each migration, the tool generates:
