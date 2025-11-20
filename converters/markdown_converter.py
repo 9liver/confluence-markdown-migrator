@@ -324,8 +324,7 @@ class MarkdownConverter(MarkdownifyConverter):
         # Only process panels without data-macro-name
         self._process_remaining_code_panels(soup)
         # Preprocess content-by-label lists
-        # Note: This is a stub - content by label conversion is handled elsewhere
-        pass
+        self._preprocess_content_by_label(soup)
     
     def _process_remaining_code_panels(self, soup: BeautifulSoup) -> None:
         """Process code panel divs that weren't handled by MacroHandler."""
@@ -361,6 +360,28 @@ class MarkdownConverter(MarkdownifyConverter):
                 # Unwrap the div - keep the pre>code structure
                 div.unwrap()
     
+    def _preprocess_content_by_label(self, soup: BeautifulSoup) -> None:
+        """Find ul tags with class content-by-label and replace them with simple bullet lists."""
+        for ul in soup.find_all('ul', class_='content-by-label'):
+            # Create a new ul to replace the old one
+            new_ul = soup.new_tag('ul')
+            
+            # Process each li child
+            for li in ul.find_all('li', recursive=False):
+                # Find the anchor link
+                anchor = li.find('a')
+                if anchor:
+                    # Create a new simplified li
+                    new_li = soup.new_tag('li')
+                    # Copy the anchor
+                    anchor_copy = soup.new_tag('a', href=anchor.get('href', ''))
+                    anchor_copy.string = anchor.get_text(strip=True)
+                    new_li.append(anchor_copy)
+                    new_ul.append(new_li)
+            
+            # Replace the old ul with the new one
+            ul.replace_with(new_ul)
+    
     def _get_comment_prefix(self, language: str) -> str:
         """Get the appropriate comment prefix for a programming language."""
         if not language:
@@ -373,6 +394,60 @@ class MarkdownConverter(MarkdownifyConverter):
         
         # Default to '#' for unknown languages
         return '#'
+    
+    def _extract_code_language(self, code_el) -> str:
+        """Extract programming language from code element classes."""
+        # Look for common language class patterns
+        classes = code_el.get('class', [])
+        for class_name in classes:
+            if class_name.startswith('language-'):
+                return class_name.replace('language-', '')
+            if class_name.startswith('lang-'):
+                return class_name.replace('lang-', '')
+        
+        # Check for common language classes in the soup
+        class_str = ' '.join(classes)
+        language_map = {
+            'bash': 'bash', 'sh': 'bash', 'shell': 'bash',
+            'python': 'python', 'py': 'python',
+            'javascript': 'javascript', 'js': 'javascript',
+            'java': 'java',
+            'c': 'c',
+            'cpp': 'cpp', 'c++': 'cpp',
+            'html': 'html',
+            'css': 'css',
+            'yaml': 'yaml', 'yml': 'yaml',
+            'json': 'json',
+            'sql': 'sql',
+        }
+        
+        for lang in language_map:
+            if lang in class_str.lower():
+                return language_map[lang]
+        
+        # Default to no language
+        return ''
+    
+    def _normalize_headings(self, markdown: str) -> str:
+        """Normalize heading formats."""
+        # This is a placeholder - could be enhanced later
+        return markdown
+    
+    def _apply_heading_offset(self, markdown: str, offset: int) -> str:
+        """Apply heading level offset."""
+        # This is a placeholder - could be enhanced later
+        return markdown
+    
+    def _indent_code_blocks_in_lists(self, markdown: str) -> str:
+        """Indent code blocks that are part of list items."""
+        # This is a placeholder - could be enhanced later
+        return markdown
+    
+    def _preserve_anchors(self, markdown: str) -> str:
+        """Anchor preservation is now handled in convert_span, this method is kept for compatibility."""
+        # No-op - anchors are now preserved during HTML to markdown conversion
+        # This method can be removed in the future
+        return markdown
     
     def _post_process_markdown(self, markdown: str, page: Any) -> str:
         """Apply post-processing to generated markdown."""
@@ -395,9 +470,6 @@ class MarkdownConverter(MarkdownifyConverter):
         markdown = self._normalize_lists(markdown)
         markdown = self._preserve_code_blocks(markdown)
         
-        # Preserve anchors from confluence-anchor-link spans
-        markdown = self._preserve_anchors(markdown)
-
         # Convert callouts to admonition syntax BEFORE indentation
         if self.target_wiki in ['wikijs', 'both']:
             markdown = self._convert_callouts_to_admonitions(markdown)
@@ -464,71 +536,99 @@ class MarkdownConverter(MarkdownifyConverter):
         return markdown
     
     def _convert_callouts_to_admonitions(self, markdown: str) -> str:
-        """Convert blockquotes with callout markers to admonition syntax."""
-        import re
+        """Convert blockquotes with callout markers to admonition syntax using line-oriented parser."""
+        lines = markdown.split('\n')
+        result_lines = []
+        i = 0
         
-        # Enhanced pattern to match blockquotes with callout class markers OR data-callout attributes
-        # Also handles nested content better
-        pattern = re.compile(
-            r'(?:> \{\.is-(info|warning|success|danger)\}\n)?'  # Optional class marker
-            r'(?:> \[data-callout=(info|warning|success|danger)\]\n)?'  # Optional data attribute marker
-            r'> \*\*([^*].*?)\*\*\n'  # Title line (non-greedy)
-            r'(?:(?:>\s*\n)*)'  # Optional empty blockquote lines
-            r'((?:> [^>].*(?:\n|$))*)'  # Content lines (non-greedy)
-        )
-        
-        def replace_admonition(match):
-            # Determine callout type (from class, data attribute, or infer from title)
-            callout_type = match.group(1) or match.group(2)
-            title = match.group(3) or 'Info'
-            content = match.group(4) or ''
+        while i < len(lines):
+            line = lines[i]
             
-            # Map title to callout type if not already set
-            if not callout_type:
-                title_lower = title.lower()
-                if 'info' in title_lower or 'information' in title_lower:
-                    callout_type = 'info'
-                elif 'warn' in title_lower:
-                    callout_type = 'warning'
-                elif 'tip' in title_lower or 'success' in title_lower or 'note' in title_lower:
-                    callout_type = 'info'  # Wiki.js uses [!info] for tips and notes
-                else:
-                    callout_type = 'info'
-            
-            # Map to Wiki.js admonition syntax
-            admonition_map = {
-                'info': '[!info]',
-                'warning': '[!warning]',
-                'success': '[!info]',  # Wiki.js doesn't have success, use info
-                'danger': '[!warning]'  # Wiki.js doesn't have danger, use warning
-            }
-            
-            admon_type = admonition_map.get(callout_type, '[!info]')
-            
-            # Format the admonition
-            result = f"> {admon_type} {title}\n"
-            if content:
-                # Add content lines, ensuring they're properly indented
-                content_lines = content.split('\n')
-                for line in content_lines:
-                    line_strip = line.strip()
-                    if line_strip:
-                        if line.startswith('> '):
-                            result += f"> {line[2:]}\n"  # Remove '> ' prefix
+            # Check if this line starts a blockquote with callout marker
+            if line.startswith('>'):
+                # Look ahead to detect a callout block
+                callout_type = None
+                title = None
+                content_start = i + 1
+                
+                # Check for callout markers on current or next line
+                if '.is-' in line or 'data-callout=' in line:
+                    # This line has the marker, next line might have title or content
+                    match = re.search(r'\.is-(info|warning|success|danger)', line)
+                    if match:
+                        callout_type = match.group(1)
+                    
+                    match = re.search(r'data-callout=(info|warning|success|danger)', line)
+                    if match:
+                        callout_type = match.group(1)
+                    
+                    # Look for title on next line
+                    if i + 1 < len(lines) and lines[i + 1].startswith('>'):
+                        next_line = lines[i + 1]
+                        # Check if next line has bold title
+                        bold_match = re.match(r'> \*\*(.+)\*\*$', next_line.strip())
+                        if bold_match:
+                            title = bold_match.group(1)
+                            content_start = i + 2
+                
+                # Find all consecutive blockquote lines
+                content_lines = []
+                j = content_start
+                while j < len(lines) and lines[j].startswith('>'):
+                    content_line = lines[j]
+                    # Skip lines that are just callout markers
+                    if '.is-' in content_line or 'data-callout=' in content_line:
+                        j += 1
+                        continue
+                    # Extract content (remove '> ' prefix if present)
+                    if content_line.startswith('> '):
+                        content_line = content_line[2:]
+                    elif content_line.startswith('>'):
+                        content_line = content_line[1:]
+                    content_lines.append(content_line)
+                    j += 1
+                
+                # If we found content lines, treat as a callout
+                if content_lines:
+                    # Determine callout type if not already set
+                    if not callout_type:
+                        callout_type = 'info'  # Default
+                    
+                    # Determine title if not already set from bold header
+                    if not title:
+                        # Use first content line as title if it looks like a title
+                        first_content = content_lines[0].strip()
+                        if len(first_content) < 50 and not first_content.startswith('-') and not first_content.startswith('1.'):
+                            title = first_content
+                            content_lines = content_lines[1:]
                         else:
-                            result += f"> {line_strip}\n"
-                    # Don't add empty lines as they break list continuation
+                            title = 'Info'  # Default title
+                    
+                    # Map to Wiki.js admonition syntax
+                    admonition_map = {
+                        'info': '[!info]',
+                        'warning': '[!warning]',
+                        'success': '[!info]',  # Wiki.js doesn't have success, use info
+                        'danger': '[!warning]'  # Wiki.js doesn't have danger, use warning
+                    }
+                    
+                    admon_type = admonition_map.get(callout_type, '[!info]')
+                    
+                    # Format the admonition
+                    result_lines.append(f"> {admon_type} {title}")
+                    for content_line in content_lines:
+                        result_lines.append(f"> {content_line}")
+                    result_lines.append("")  # Empty line after admonition
+                    
+                    # Skip ahead to after this block
+                    i = j
+                    continue
             
-            return result + "\n"
+            # Not a callout block, just copy the line
+            result_lines.append(line)
+            i += 1
         
-        # Apply the transformation repeatedly to handle all matches
-        previous_markdown = ''
-        current_markdown = markdown
-        while previous_markdown != current_markdown:
-            previous_markdown = current_markdown
-            current_markdown = pattern.sub(replace_admonition, current_markdown)
-        
-        return current_markdown
+        return '\n'.join(result_lines)
 
     def _convert_blockquote_to_admonition(self, el) -> str:
         """Convert blockquote element to admonition syntax during HTML conversion."""
@@ -1013,23 +1113,14 @@ class MarkdownConverter(MarkdownifyConverter):
         indent = '    ' * depth  # 4 spaces per level
         
         result = ''
-        # Process each list item
+        # Process each list item - nested lists are now handled in _process_list_item_content
         for child in el.children:
             if child.name == 'li':
-                # Get the text of the list item
+                # Get the text of the list item (including nested lists)
                 item_text = self._process_list_item_content(child, depth + 1)
                 
                 # Add the list item with proper indentation
                 result += f"{indent}- {item_text}\n"
-                
-                # Process nested lists
-                for nested_child in child.children:
-                    if nested_child.name in ['ul', 'ol']:
-                        nested_result = self._convert_nested_list(nested_child, depth + 1)
-                        if nested_result:
-                            result += nested_result + '\n'
-                
-                # If this is the last item, don't add extra newline
         
         return result.rstrip() + '\n' if result else ''
     
@@ -1056,12 +1147,7 @@ class MarkdownConverter(MarkdownifyConverter):
                 
                 result += f"{indent}{number}. {item_text}\n"
                 
-                # Process nested lists
-                for nested_child in child.children:
-                    if nested_child.name in ['ul', 'ol']:
-                        nested_result = self._convert_nested_list(nested_child, depth + 1)
-                        if nested_result:
-                            result += nested_result + '\n'
+
         
         return result.rstrip() + '\n' if result else ''
     
@@ -1074,30 +1160,59 @@ class MarkdownConverter(MarkdownifyConverter):
         return ''
     
     def _process_list_item_content(self, li, depth):
-        """Process content within a list item."""
+        """Process content within a list item, handling block-level and inline elements."""
         from bs4 import BeautifulSoup
         
         # Convert the li element to HTML and process it
         li_html = str(li)
         li_soup = BeautifulSoup(li_html, 'lxml')
+        li_tag = li_soup.find('li')
         
-        # Get direct text and inline elements
-        content = ''
-        for child in li_soup.find('li').children:
+        parts = []
+        nested_list_content = ''
+        
+        for child in li_tag.children:
             if not hasattr(child, 'name') or child.name is None:
                 # Text node
                 text = str(child).strip()
                 if text:
-                    content += text + ' '
+                    parts.append(text)
+            elif child.name in ['ul', 'ol']:
+                # Nested lists - handle separately
+                nested_list_content = '\\n' + self._convert_nested_list(child, depth + 1)
             elif child.name in ['p', 'span', 'strong', 'em', 'b', 'i', 'code', 'a']:
                 # Inline elements - convert recursively
-                from bs4 import BeautifulSoup
                 child_html = str(child)
                 child_md = self.convert(child_html)
                 if child_md:
-                    content += child_md.strip() + ' '
+                    parts.append(child_md.strip())
+            elif child.name == 'div':
+                # Check if it's a code panel
+                classes = child.get('class', [])
+                is_code_panel = any('code' in classes) and any('panel' in classes)
+                
+                if is_code_panel or child.find('pre'):
+                    # Code block - convert with newline separation
+                    child_md = self.convert(str(child))
+                    if child_md:
+                        parts.append(child_md.strip())
+                else:
+                    # Regular div - convert content
+                    child_md = self.convert(str(child))
+                    if child_md:
+                        parts.append(child_md.strip())
+            elif child.name == 'blockquote':
+                # Blockquote - convert recursively
+                child_md = self.convert(str(child))
+                if child_md:
+                    parts.append(child_md.strip())
         
-        return content.strip()
+        # Join parts with double newlines for paragraph separation
+        content = '\\n\\n'.join(parts)
+        # Append nested list content if any
+        if nested_list_content:
+            content += nested_list_content
+        return content
     
     def convert_code(self, el, text, parent_tags=None, **kwargs):
         """Handle inline code and code blocks."""
@@ -1112,6 +1227,19 @@ class MarkdownConverter(MarkdownifyConverter):
             # Use double backticks if content contains backticks
             return f'``{text}``'
         return f'`{text}`'
+    
+    def convert_span(self, el, text, parent_tags=None, **kwargs):
+        """Handle span conversion, specifically for confluence anchors."""
+        classes = el.get('class', [])
+        
+        # Check for confluence-anchor-link with id attribute
+        if 'confluence-anchor-link' in classes and el.get('id'):
+            anchor_id = el['id']
+            # Return markdown-safe anchor representation
+            return f'<a id="{anchor_id}"></a>'
+        
+        # Regular span - use text content
+        return text
     
     def convert_img(self, el, text, parent_tags=None, **kwargs):
         """Handle image conversion."""

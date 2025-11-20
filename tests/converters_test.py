@@ -233,8 +233,30 @@ $ sudo apt update && sudo apt install python3 python3-pip git
         soup = BeautifulSoup(html, 'lxml')
         markdown = self.converter.convert_standalone_html(str(soup), 'export')
         
-        # Should preserve the anchor
-        self.assertTrue('<a id="Ansiblelokaleinrichten-3"></a>' in markdown or '{#Ansiblelokaleinrichten-3}' in markdown)
+        # Should preserve the anchor immediately after the content
+        self.assertIn('<a id="Ansiblelokaleinrichten-3"></a>', markdown)
+        # Should not duplicate the anchor
+        self.assertEqual(markdown.count('<a id="Ansiblelokaleinrichten-3"></a>'), 1)
+    
+    def test_multiple_anchors_preserved(self):
+        """Test that multiple anchors in sequence render consistently."""
+        html = '''
+        <h2>Heading 1<span class="confluence-anchor-link" id="section-1"></span></h2>
+        <p>Paragraph 1 <span class="confluence-anchor-link" id="paragraph-1"></span></p>
+        <h3>Subheading 1<span class="confluence-anchor-link" id="subsection-1"></span></h3>
+        '''
+        
+        markdown = self.converter.convert_standalone_html(html, 'export')
+        
+        # Each anchor should appear exactly once and be properly placed
+        self.assertIn('<a id="section-1"></a>', markdown)
+        self.assertIn('<a id="paragraph-1"></a>', markdown)
+        self.assertIn('<a id="subsection-1"></a>', markdown)
+        
+        # No duplicates
+        self.assertEqual(markdown.count('<a id="section-1"></a>'), 1)
+        self.assertEqual(markdown.count('<a id="paragraph-1"></a>'), 1)
+        self.assertEqual(markdown.count('<a id="subsection-1"></a>'), 1)
     
     def test_content_by_label_conversion(self):
         """Test content-by-label lists convert to simple bullet lists."""
@@ -259,9 +281,8 @@ $ sudo apt update && sudo apt install python3 python3-pip git
         </ul>
         '''
         
-        soup = BeautifulSoup(html, 'lxml')
-        self.converter._preprocess_content_by_label(soup)
-        markdown = self.converter.convert_standalone_html(str(soup), 'export')
+        # Test through public conversion API - pre-processing happens internally
+        markdown = self.converter.convert_standalone_html(html, 'export')
         
         # Should be converted to simple bullet list
         self.assertIn('-', markdown)
@@ -298,11 +319,8 @@ $ sudo apt update && sudo apt install python3 python3-pip git
         </ol>
         '''
         
-        soup = BeautifulSoup(html, 'lxml')
-        soup = self.html_cleaner.clean(soup, 'export')
-        soup, stats, warnings = self.macro_handler.convert(soup, 'export')
-        self.converter._preprocess_content_by_label(soup)
-        markdown = self.converter.convert_standalone_html(str(soup), 'export')
+        # Test through public conversion API - pre-processing happens internally       
+        markdown = self.converter.convert_standalone_html(html, 'export')
         
         # Check for admonitions
         self.assertIn('[!', markdown)
@@ -362,6 +380,85 @@ $ sudo apt update && sudo apt install python3 python3-pip git
         
         for item in third_level_items:
             self.assertTrue(item.startswith('        '), f"Third level should have 8 spaces: {item}")
+
+    def test_list_item_with_text_and_admonition(self):
+        """Test list item containing both descriptive text and inner admonition."""
+        html = '''
+        <ol>
+            <li>Step with admonition:
+                <div class="confluence-information-macro confluence-information-macro-information">
+                    <div class="confluence-information-macro-body">
+                        <p>Important note about this step</p>
+                    </div>
+                </div>
+            </li>
+            <li>Another step with code:
+                <div class="code panel pdl">
+                    <div class="codeContent panelContent pdl">
+                        <pre class="syntaxhighlighter-pre">echo "test"</pre>
+                    </div>
+                </div>
+            </li>
+        </ol>
+        '''
+        
+        markdown = self.converter.convert_standalone_html(html, 'export')
+        
+        # Should have both list items
+        self.assertIn('1.', markdown)
+        self.assertIn('2.', markdown)
+        # Should have admonition content
+        self.assertIn('[!', markdown)
+        self.assertIn('Important note', markdown)
+        # Should have code block
+        self.assertIn('```', markdown)
+        # Should preserve text before admonition/code
+        self.assertIn('Step with admonition', markdown)
+        self.assertIn('Another step with code', markdown)
+
+    def test_callout_with_list_content(self):
+        """Test callout/admonition transformation preserving list structure."""
+        html = '''
+        <blockquote class="is-info">
+            <p><strong>Important Note</strong></p>
+            <ul>
+                <li>First important point</li>
+                <li>Second important point</li>
+            </ul>
+        </blockquote>
+        '''
+        
+        markdown = self.converter.convert_standalone_html(html, 'export')
+        
+        # Should convert to admonition syntax
+        self.assertIn('[!info]', markdown)
+        # Should preserve the title
+        self.assertIn('Important Note', markdown)
+        # Should preserve the list structure
+        self.assertIn('-', markdown)
+        self.assertIn('First important point', markdown)
+        self.assertIn('Second important point', markdown)
+    
+    def test_callout_with_nested_blockquote(self):
+        """Test callout/admonition with nested blockquotes preserves structure."""
+        html = '''
+        <blockquote class="is-warning">
+            <p><strong>Nested Content</strong></p>
+            <blockquote>
+            <p>Inner quote content</p>
+            </blockquote>
+        </blockquote>
+        '''
+        
+        markdown = self.converter.convert_standalone_html(html, 'export')
+        
+        # Should convert to admonition syntax
+        self.assertIn('[!warning]', markdown)
+        # Should preserve the title
+        self.assertIn('Nested Content', markdown)
+        # Should preserve inner blockquote markers
+        self.assertIn('> ', markdown)
+        self.assertIn('Inner quote content', markdown)
 
 
 if __name__ == '__main__':
