@@ -235,15 +235,28 @@ class MarkdownConverter(MarkdownifyConverter):
             
             # Step 6: Convert to markdown
             raw_markdown = self._convert_to_markdown(soup)
-            
-            # ENHANCED: Validate content preservation
+
+            # ENHANCED: Validate content preservation with fallback
             original_length = len(page.content)
-            if len(raw_markdown) < original_length * 0.3:  # Lost >70% of content
+            content_loss_threshold = self.config.get('content_loss_threshold', 0.3)
+            if len(raw_markdown) < original_length * content_loss_threshold:  # Lost >70% of content by default
                 self.logger.warning(
                     f"Significant content loss detected for page {page.id}: "
                     f"Original {original_length} chars -> Markdown {len(raw_markdown)} chars"
                 )
-            
+                # Fallback: append original HTML as fenced code block for manual review
+                fallback_section = (
+                    "\n\n---\n\n"
+                    "> [!warning] Content Loss Detected\n"
+                    "> Significant content loss was detected during conversion. "
+                    "Original HTML is preserved below for manual review.\n\n"
+                    "```html\n"
+                    f"{page.content}\n"
+                    "```\n"
+                )
+                raw_markdown += fallback_section
+                self.logger.info(f"Appended original HTML as fallback for page {page.id}")
+
             # Step 7: Post-process markdown (stores link_stats on self)
             processed_markdown = self._post_process_markdown(raw_markdown, page)
             
@@ -1196,7 +1209,7 @@ class MarkdownConverter(MarkdownifyConverter):
                     parts.append(text)
             elif child.name in ['ul', 'ol']:
                 # Nested lists - handle separately
-                nested_list_content = '\\n' + self._convert_nested_list(child, depth + 1)
+                nested_list_content = '\n' + self._convert_nested_list(child, depth + 1)
             elif child.name in ['p', 'span', 'strong', 'em', 'b', 'i', 'code', 'a']:
                 # Inline elements - convert recursively
                 child_html = str(child)
@@ -1208,12 +1221,6 @@ class MarkdownConverter(MarkdownifyConverter):
                 pre_md = self.convert_pre(child, child.get_text())
                 if pre_md:
                     parts.append(pre_md.strip())
-            elif child.name in ['p', 'span', 'strong', 'em', 'b', 'i', 'code', 'a']:
-                # Inline elements - convert recursively
-                child_html = str(child)
-                child_md = self.convert(child_html)
-                if child_md:
-                    parts.append(child_md.strip())
             elif child.name == 'div':
                 # Check if it's a code panel
                 classes = child.get('class', [])
