@@ -47,6 +47,11 @@ python export_confluence_html.py 244744731 meine_seite.html https://confluence.e
 
 # Mit system Zertifikaten (für interne CAs)
 USE_SYSTEM_CA=1 python export_confluence_html.py 244744731
+
+# Ohne SSL-Verifizierung (NICHT EMPFOHLEN, aber funktioniert)
+python export_confluence_html.py --insecure 244744731
+# Oder:
+CONFLUENCE_INSECURE=1 python export_confluence_html.py 244744731
 ```
 
 ### Parameter
